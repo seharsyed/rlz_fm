@@ -69,11 +69,65 @@ void RLZ_CHAR::load_file_to_string(const std::string& input_file, std::string& c
 
     // Load the file as string
     if (file.read(&content[0], file_size)) {
-        spdlog::info("File read successfully.");
+        spdlog::debug("File read successfully.");
     } else {
         spdlog::error("Error reading file: {}", input_file);
         std::exit(EXIT_FAILURE);
     }
+
+    file.close();
+    auto sw_convert_elapsed = sw_convert.elapsed();
+    spdlog::debug("Finished storing file in {:.3} seconds", sw_convert_elapsed.count());
+
+    // spdlog::stopwatch sw_save;
+    // spdlog::debug("Saving bit array sdsl object to file");
+    //// Save the bit vector to a file
+    // sdsl::store_to_file(bit_array, input_file + ".sdsl");
+    // auto sw_save_elapsed = sw_save.elapsed();
+    // spdlog::debug("Finished saving in {:.3} seconds", sw_save_elapsed.count());
+}
+
+
+/**
+* @brief Loads the reversed file content into a string.
+*
+* Loads the reversed file content directly into a string. Opens the input file in binary mode
+* and moves pointer at end of file to get file size quickly. We then resize the string
+* to be large enough to hold the file content in bytes.  
+*
+* @param[in] input_file [string] Path to either the reference or sequence file 
+* @param[in] content [string] Where the string representation of the file is located.
+* @return void
+*/
+
+void RLZ_CHAR::load_reverse_file_to_string(const std::string& input_file, std::string& content)
+{
+    spdlog::stopwatch sw_convert;
+    spdlog::debug("Storing file as string");
+
+    // std::ios::ate moves cursor to end of file
+    std::ifstream file(input_file, std::ios::binary | std::ios::ate);
+    if (!file) {
+        spdlog::error("Error opening {}", input_file);
+        std::exit(EXIT_FAILURE);
+    }
+
+    // Get the file size in bytes
+    std::streamsize file_size = file.tellg();
+    // std::ios::beg moves cursor to beginning
+    file.seekg(0, std::ios::beg);
+
+    // Resize the content field
+    content.resize(file_size);
+
+    // Efficiently read and build the reversed string
+    for (std::streamsize i = 0; i < file_size; ++i) {
+        char byte;
+        file.get(byte); // Read a byte from the file
+        content[file_size - 1 - i] = byte; // Place it at the reverse position
+    }
+
+    spdlog::debug("File read successfully.");
 
     file.close();
     auto sw_convert_elapsed = sw_convert.elapsed();
@@ -93,23 +147,22 @@ void RLZ_CHAR::load_file_to_string(const std::string& input_file, std::string& c
 * This function does the RLZ_CHAR parsing of the sequence file. It parses relative to the original file content of the reference.
 * Fails if there is a character in the sequence that is not present in the reference.
 *
-* RLZ algorithm tries to greedily find the longest substring match within the reference starting from the
-* first character in the sequence character such that the RLZ parse in the end contains (pos, len) pairs
+* RLZ algorithm tries to greedily find the longest sequence substring match within the reference.
+* The RLZ parse in the end contains (pos, len) pairs
 * in relation to the reference such that the sequence can be reconstructed from only the RLZ parse and the reference
 * file. It is a O(n) algorithm. The size is the reference file + the RLZ parse.
 *
 * The algorithm implemented here is as follows.
-* 1. Starting from the last char of the sequence file or sequence file chunk, check if char matches the reference
+* 1. Starting from the last char of the reversed sequence file or sequence file chunk, check if char matches the reversed reference
 * (via backwards match with FM-index) 
 * 2a. If match, check if next char also matches (ex. aab. I know that b matches then check if ab matches etc...)
-* 2b. If match and end of sequence file or sequence file chunk, push current (pos,len) pair to parse stack
-* 2c. If mismatch, push (prev pos, len - 1) to parse stack. Reset search from bit that caused mismatch.
+* 2b. If match and end of sequence file or sequence file chunk, push current (pos,len) pair to parse vector
+* 2c. If mismatch, push (prev pos, len - 1) to parse stack. Reset search from char that caused mismatch.
 *
-* Push to parse stack since we process the string in reverse. Popping from stack gives correct order.
 *
 * @param [in] fm_index [sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 1024>] the fm-index of the reference
 * @param [in] fm_support [FM_Wrapper] Utility object that allows us to do search and locate queries with fm-index.
-* @param [in] seq_parse_stack_vec [std::vector<std::stack<std::tuple<uint64_t, uint64_t>>>] empty RLZ_CHAR parse stacks equal to number of threads
+* @param [in] seq_parse_vec_vec [std::vector<std::vector<std::tuple<uint64_t, uint64_t>>>] empty RLZ_CHAR parse vectors equal to number of threads
 * @param [in] num_char_to_process [size_t] the number of chars that should be processed. Useful for the OpenMP parallelization.
 * @param [in] loop_iter [size_t] the loop iteration. Useful for OpenMP and making sure we are thread-safe.
 * @param [in] num_threads [size_t] the total number of threads allocated.
@@ -121,7 +174,7 @@ void RLZ_CHAR::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 51
         FM_Wrapper& fm_support,
         const std::map<char, uint64_t>& occs, 
         const std::string& seq_content,
-        std::vector<std::stack<std::tuple<uint64_t, uint64_t>>>& seq_parse_stack_vec,
+        std::vector<std::vector<std::tuple<uint64_t, uint64_t>>>& seq_parse_vec_vec,
         size_t num_char_to_process,
         size_t loop_iter,
         size_t num_threads)
@@ -136,10 +189,10 @@ void RLZ_CHAR::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 51
     long long int start_loc = (seq_size - 1) - (loop_iter * num_char_to_process);
     long long int end_loc;
 
-    // Last chunk so process remaining bits
+    // Last chunk so process remaining chars
     if (loop_iter == num_threads - 1)
         end_loc = -1;
-    // Process bits up to next chunk
+    // Process chars up to next chunk
     else
         end_loc = (seq_size - 1) - ((loop_iter + 1) * num_char_to_process);
 
@@ -157,18 +210,26 @@ void RLZ_CHAR::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 51
 
         // If same then that means no perfect match so we reset.
         if (next_left == next_right){
-            seq_parse_stack_vec[loop_iter].push(std::make_tuple(fm_support.get_suffix_array_value(fm_index, prev_left), pattern.size()-1));
+            uint64_t pattern_len = pattern.size() - 1; // -1 due to not matching the last character successfully
+            uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, prev_left);
+            uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos; // 0 based involution formula of sa position to correct for the reverse string matching (will give pos in ref where pattern ends)
+            uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len; // adjust the position to where pattern starts
+            seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
             prev_left = 0;
-            prev_right = fm_index.bwt.size()-1;
+            prev_right = fm_index.bwt.size();
             next_left = 0;
-            next_right = fm_index.bwt.size()-1;
+            next_right = fm_index.bwt.size();
             pattern = "";
             ++i;
         }
         // If at the end we are still in a perfect match, we save what we have. 
         else if (i == end_loc + 1)
         {
-            seq_parse_stack_vec[loop_iter].push(std::make_tuple(fm_support.get_suffix_array_value(fm_index, next_left), pattern.size()));
+            uint64_t pattern_len = pattern.size();
+            uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, next_left);
+            uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos;
+            uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len;
+            seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
         }
         // Currently in a perfect match
         else{
@@ -209,12 +270,11 @@ void RLZ_CHAR::calculate_occs(std::string content, std::map<char, uint64_t>& occ
 /**
 * @brief Compresses the sequence file in relation to the reference file.
 *
-* Creates a FM-index from the reference string which we query using the sequence string.
-* We first create the FM-index from the string representation of the reference.
-* We query the index one char at time from the sequence string. When the sequence char does not have a match, 
+* Creates a FM-index from the reversed reference string which we query using the reversed sequence string in order to simulate forward matching.
+* We first create the FM-index from the reveresed string representation of the reference.
+* We query the index one char at time from the reversed sequence string. When the sequence char does not have a match, 
 * we add the last matching ref position of the sequence and the length of the match to the parse. Then we 
-* restart the match at the last mismatch position. The parse is stored on a stack due to processing the chars 
-* in reverse (backwards match with FM-index). Popping from stack gives correct order. The parse is ultimately
+* restart the match at the last mismatch position. The parse is ultimately
 * stored in a vector in the correct order. The parse at the end is serialized to a file.
 *
 * @param [in] threads [int] The number of threads provided by the user.
@@ -226,11 +286,6 @@ void RLZ_CHAR::calculate_occs(std::string content, std::map<char, uint64_t>& occ
 * 
 * @warning Will fail if the sequence file contains a char not present in the reference file
 *
-* @note Supposedly cannot create a FM-index directly from bit array.
-* Have to first convert into the reference bits into their string representation and then create the FM-index.
-* Likely a bottleneck in the code as have to store a bit as a byte. [check if there is a way to build bit level FM-index]
-*
-* @note Might be more efficient to serialize the stack then create the vector [implementation detail]
 */
 
 void RLZ_CHAR::compress(int threads)
@@ -246,7 +301,7 @@ void RLZ_CHAR::compress(int threads)
 
     FM_Wrapper fm_support;
 
-    std::vector<std::stack<std::tuple<uint64_t, uint64_t>>> seq_parse_stack_vec(threads);
+    std::vector<std::vector<std::tuple<uint64_t, uint64_t>>> seq_parse_vec_vec(threads);
     size_t num_char_to_process = seq_content.size() / threads;  // Integer division
 
     // Comment (Testing only)
@@ -255,20 +310,20 @@ void RLZ_CHAR::compress(int threads)
     #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < threads; i++)
     {
-        parse(fm_index, fm_support, occs, seq_content, seq_parse_stack_vec, num_char_to_process, i, threads);
+        parse(fm_index, fm_support, occs, seq_content, seq_parse_vec_vec, num_char_to_process, i, threads);
     }
 
-    // Pop from stack and store in seq_parse vector
+    // Store tuples of (pos,len) in correct order in vector
     size_t chars_stored = 0;
     std::vector<std::tuple<uint64_t, uint64_t>> seq_parse;
-    // Have to process the parse stacks in reverse order since the first stack contains the parse of the end of the sequence.
-    for (int i = threads - 1; i >= 0; i--)
+    // Can process the parse vectors sequentially since the first vector contains the parse of the start of the non-reversed sequence.
+    for (int i = 0; i < threads; i++)
     {
-        while (!seq_parse_stack_vec[i].empty())
+        for (int j = 0; j < seq_parse_vec_vec[i].size(); j++)
         {
-            chars_stored += std::get<1>(seq_parse_stack_vec[i].top());
-            seq_parse.emplace_back(seq_parse_stack_vec[i].top());
-            seq_parse_stack_vec[i].pop();
+            chars_stored += std::get<1>(seq_parse_vec_vec[i][j]);
+            seq_parse.emplace_back(seq_parse_vec_vec[i][j]);
+            // spdlog::debug("Ref Pos: {}, Len: {}", std::get<0>(seq_parse.back()), std::get<1>(seq_parse.back()));
         }
     }
 

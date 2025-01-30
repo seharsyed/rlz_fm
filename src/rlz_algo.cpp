@@ -92,29 +92,86 @@ void RLZ::load_file_to_bit_vector(const std::string& input_file, sdsl::bit_vecto
 }
 
 /**
+* @brief Loads the reversed file content into a bit vector.
+*
+* Loads the reversed file content directly into a sdsl bit vector. Opens the input file in binary mode
+* and moves pointer at end of file to get file size quickly. We then resize the bit vector
+* to be large enough to hold the file content in bits. Read file byte by byte and store
+* in bit vector.   
+*
+* @param[in] input_file [string] Path to either the reference or sequence file 
+* @param[in] bit_array [sdsl::bit_vector] The corresponding bit array to store the file
+* @return void
+*/
+
+void RLZ::load_reverse_file_to_bit_vector(const std::string& input_file, sdsl::bit_vector& bit_array)
+{
+    spdlog::stopwatch sw_convert;
+    spdlog::debug("Reading file and creating bit array");
+
+    // std::ios::ate moves cursor to end of file
+    std::ifstream file(input_file, std::ios::binary | std::ios::ate);
+    if (!file) {
+        spdlog::error("Error opening {}", input_file);
+        std::exit(EXIT_FAILURE);
+    }
+
+    // Get the file size in bytes
+    std::streamsize file_size = file.tellg();
+    // std::ios::beg moves cursor to beginning
+    file.seekg(0, std::ios::beg);
+
+    // Resize the bit array to hold the number of bits required
+    bit_array.resize(file_size * 8);
+
+    // Read the file and populate the bit vector
+    char byte;
+    std::size_t bit_index = file_size * 8 - 1;
+    while (file.get(byte)) {
+        // Starts from most sig bit of byte becoming least significant bit and then mask other bits and store in bit array.
+        // This stores the bits of the bytes in reverse order.
+        for (int i = 7; i >= 0; --i) {
+            bit_array[bit_index--] = (byte >> i) & 1;
+        }
+    }
+
+    file.close();
+    auto sw_convert_elapsed = sw_convert.elapsed();
+    spdlog::debug("Finished creating bit array in {:.3} seconds", sw_convert_elapsed.count());
+
+    // spdlog::stopwatch sw_save;
+    // spdlog::debug("Saving bit array sdsl object to file");
+    //// Save the bit vector to a file
+    // sdsl::store_to_file(bit_array, input_file + ".sdsl");
+    // auto sw_save_elapsed = sw_save.elapsed();
+    // spdlog::debug("Finished saving in {:.3} seconds", sw_save_elapsed.count());
+}
+
+
+/**
 * @brief Parses the sequence file in relation to the reference file
 *
 * This function does the RLZ parsing of the sequence file. It currently works at the
 * "psuedo" bit level. To clarify, it currently processes the string representation of the bits of the 
 * sequence file. Working at bit level allows us to compress all types of files.
 *
-* RLZ algorithm tries to greedily find the longest substring match within the reference starting from the
-* first character in the sequence character such that the RLZ parse in the end contains (pos, len) pairs
+* RLZ algorithm tries to greedily find the longest sequence substring match within the reference.
+* The RLZ parse in the end contains (pos, len) pairs
 * in relation to the reference such that the sequence can be reconstructed from only the RLZ parse and the reference
 * file. It is a O(n) algorithm. The size is the reference file + the RLZ parse.
 *
 * The algorithm implemented here is as follows.
-* 1. Starting from the last bit of the sequence file or sequence file chunk, check if bit matches the reference
+* 1. Starting from the last bit of the reversed sequence file or sequence file chunk, check if bit matches the reversed reference
 * (via backwards match with FM-index) 
 * 2a. If match, check if next bit also matches (ex. 001. I know that 1 matches then check if 01 matches etc...)
-* 2b. If match and end of sequence file or sequence file chunk, push current (pos,len) pair to parse stack
+* 2b. If match and end of sequence file or sequence file chunk, push current (pos,len) pair to parse vector
 * 2c. If mismatch, push (prev pos, len - 1) to parse stack. Reset search from bit that caused mismatch.
 *
 * Push to parse stack since we process the string in reverse. Popping from stack gives correct order.
 *
 * @param [in] fm_index [sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 1024>] the fm-index of the reference
 * @param [in] fm_support [FM_Wrapper] Utility object that allows us to do search and locate queries with fm-index.
-* @param [in] seq_parse_stack_vec [std::vector<std::stack<std::tuple<uint64_t, uint64_t>>>] empty RLZ parse stacks equal to number of threads
+* @param [in] seq_parse_vec_vec [std::vector<std::vector<std::tuple<uint64_t, uint64_t>>>] empty RLZ parse vectors equal to number of threads
 * @param [in] num_bits_to_process [size_t] the number of bits that should be processed. Useful for the OpenMP parallelization.
 * @param [in] loop_iter [size_t] the loop iteration. Useful for OpenMP and making sure we are thread-safe.
 * @param [in] num_threads [size_t] the total number of threads allocated.
@@ -126,7 +183,7 @@ void RLZ::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 10
         FM_Wrapper& fm_support,
         const std::map<char, uint64_t>& occs,
         const sdsl::bit_vector& seq_bit_array,
-        std::vector<std::stack<std::tuple<uint64_t, uint64_t>>>& seq_parse_stack_vec,
+        std::vector<std::vector<std::tuple<uint64_t, uint64_t>>>& seq_parse_vec_vec,
         size_t num_bits_to_process,
         size_t loop_iter,
         size_t num_threads)
@@ -162,18 +219,26 @@ void RLZ::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 10
 
         // If same then that means no perfect match so we reset.
         if (next_left == next_right){
-            seq_parse_stack_vec[loop_iter].push(std::make_tuple(fm_support.get_suffix_array_value(fm_index, prev_left), pattern.size()-1));
+            uint64_t pattern_len = pattern.size() - 1; // -1 due to not matching the last character successfully
+            uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, prev_left);
+            uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos; // 0 based involution formula of sa position to correct for the reverse string matching (will give pos in ref where pattern ends)
+            uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len; // adjust the position to where pattern starts
+            seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
             prev_left = 0;
-            prev_right = fm_index.bwt.size()-1;
+            prev_right = fm_index.bwt.size();
             next_left = 0;
-            next_right = fm_index.bwt.size()-1;
+            next_right = fm_index.bwt.size();
             pattern = "";
             ++i;
         }
         // If at the end we are still in a perfect match, we save what we have. 
         else if (i == end_loc + 1)
         {
-            seq_parse_stack_vec[loop_iter].push(std::make_tuple(fm_support.get_suffix_array_value(fm_index, next_left), pattern.size()));
+            uint64_t pattern_len = pattern.size();
+            uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, next_left);
+            uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos;
+            uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len;
+            seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
         }
         // Currently in a perfect match
         else{
@@ -214,12 +279,11 @@ void RLZ::calculate_occs(std::string content, std::map<char, uint64_t>& occs)
 /**
 * @brief Compresses the sequence file in relation to the reference file.
 *
-* Creates a FM-index from the reference bit array which we query using the sequence bit array.
-* We first convert the reference bit array into its string representation so that we can create the FM-index.
-* We query the index one bit at time from the sequence bit array. When the sequence bit does not have a match, 
+* Creates a FM-index from the reversed reference bit array which we query using the reversed sequence bit array in order to simulate forward matching.
+* We first convert the reversed reference bit array into its string representation so that we can create the FM-index.
+* We query the index one bit at time from the reversed sequence bit array. When the sequence bit does not have a match, 
 * we add the last matching ref position of the sequence and the length of the match to the parse. Then we 
-* restart the match at the last mismatch position. The parse is stored on a stack due to processing the bits 
-* in reverese (backwards match with FM-index). Popping from stack gives correct order. The parse is ultimately
+* restart the match at the last mismatch position. The parse is ultimately
 * stored in a vector in the correct order. The parse at the end is serialized to a file.
 *
 * @param [in] threads [int] The number of threads provided by the user.
@@ -233,7 +297,6 @@ void RLZ::calculate_occs(std::string content, std::map<char, uint64_t>& occs)
 * Have to first convert into the reference bits into their string representation and then create the FM-index.
 * Likely a bottleneck in the code as have to store a bit as a byte. [check if there is a way to build bit level FM-index]
 *
-* @note Might be more efficient to serialize the stack then create the vector [implementation detail]
 */
 
 void RLZ::compress(int threads)
@@ -253,8 +316,10 @@ void RLZ::compress(int threads)
 
     FM_Wrapper fm_support;
     
+    // Comment (Testing only)
+    // bits_to_str(seq_bit_array, ".decompress.bits");
 
-    std::vector<std::stack<std::tuple<uint64_t, uint64_t>>> seq_parse_stack_vec(threads);
+    std::vector<std::vector<std::tuple<uint64_t, uint64_t>>> seq_parse_vec_vec(threads);
     size_t num_bits_to_process = seq_bit_array.size() / threads;  // Integer division
 
     // Comment (Testing only)
@@ -263,20 +328,20 @@ void RLZ::compress(int threads)
     #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < threads; i++)
     {
-        parse(fm_index, fm_support, occs, seq_bit_array, seq_parse_stack_vec, num_bits_to_process, i, threads);
+        parse(fm_index, fm_support, occs, seq_bit_array, seq_parse_vec_vec, num_bits_to_process, i, threads);
     }
 
-    // Pop from stack and store in seq_parse vector
+    // Store tuples of (pos,len) in correct order in vector
     size_t bits_stored = 0;
     std::vector<std::tuple<uint64_t, uint64_t>> seq_parse;
-    // Have to process the parse stacks in reverse order since the first stack contains the parse of the end of the sequence.
-    for (int i = threads - 1; i >= 0; i--)
+    // Can process the parse vectors sequentially since the first vector contains the parse of the start of the non-reversed sequence.
+    for (int i = 0; i < threads; i++)
     {
-        while (!seq_parse_stack_vec[i].empty())
+        for (int j = 0; j < seq_parse_vec_vec[i].size(); j++)
         {
-            bits_stored += std::get<1>(seq_parse_stack_vec[i].top());
-            seq_parse.emplace_back(seq_parse_stack_vec[i].top());
-            seq_parse_stack_vec[i].pop();
+            bits_stored += std::get<1>(seq_parse_vec_vec[i][j]);
+            seq_parse.emplace_back(seq_parse_vec_vec[i][j]);
+            // spdlog::debug("Ref Pos: {}, Len: {}", std::get<0>(seq_parse.back()), std::get<1>(seq_parse.back()));
         }
     }
 

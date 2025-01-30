@@ -25,13 +25,14 @@ class RLZ {
             FM_Wrapper& fm_support,
             const std::map<char, uint64_t>& occs,
             const sdsl::bit_vector& seq_bit_array,
-            std::vector<std::stack<std::tuple<uint64_t, uint64_t>>>& seq_parse_stack_vec,
+            std::vector<std::vector<std::tuple<uint64_t, uint64_t>>>& seq_parse_stack_vec,
             size_t num_bits_to_process,
             size_t loop_iter,
             size_t num_threads);
 
         void decompress();
         void load_file_to_bit_vector(const std::string& input_file, sdsl::bit_vector& bit_array);
+        void load_reverse_file_to_bit_vector(const std::string& input_file, sdsl::bit_vector& bit_array);
         void calculate_occs(std::string content, std::map<char, uint64_t>& occs);
         void serialize(const std::vector<std::tuple<uint64_t, uint64_t>>& seq_parse);
         std::vector<std::tuple<uint64_t, uint64_t>> deserialize();
