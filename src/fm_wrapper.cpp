@@ -41,7 +41,7 @@ FM_Wrapper::~FM_Wrapper(){}
 * @return the backwards search range of next_char 
 */
 
-std::tuple<size_t, size_t> FM_Wrapper::backward_match(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 1024>& fm_index,
+std::tuple<size_t, size_t> FM_Wrapper::backward_match(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>& fm_index,
                                                     const std::map<char, uint64_t>& occs,
                                                     const std::tuple<size_t, size_t>& prev_backward_range,
                                                     const char next_char)
@@ -80,7 +80,7 @@ std::tuple<size_t, size_t> FM_Wrapper::backward_match(const sdsl::csa_wt<sdsl::w
 * @return the suffix array index
 */
 
-size_t FM_Wrapper::get_suffix_array_value(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 1024>& fm_index,
+size_t FM_Wrapper::get_suffix_array_value(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>& fm_index,
                                         const size_t location)
 {
     return fm_index[location];

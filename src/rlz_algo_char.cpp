@@ -13,7 +13,18 @@
 #include <omp.h>
 #include "spdlog/spdlog.h"
 #include "spdlog/stopwatch.h"
+#include <chrono>
 
+std::chrono::duration<double> backward_match_time_char{0.0};
+std::chrono::duration<double> sa_time_char{0.0};
+std::chrono::duration<double> serialize_time_char{0.0};
+
+/**
+* @brief Constructor of RLZ_CHAR class
+* @param[in] ref_file [string] Path to reference file
+*/
+
+RLZ_CHAR::RLZ_CHAR(const std::string ref_file): ref_file(ref_file){}
 
 /**
 * @brief Constuctor of RLZ_CHAR class.
@@ -160,7 +171,7 @@ void RLZ_CHAR::load_reverse_file_to_string(const std::string& input_file, std::s
 * 2c. If mismatch, push (prev pos, len - 1) to parse stack. Reset search from char that caused mismatch.
 *
 *
-* @param [in] fm_index [sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 1024>] the fm-index of the reference
+* @param [in] fm_index [sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>] the fm-index of the reference
 * @param [in] fm_support [FM_Wrapper] Utility object that allows us to do search and locate queries with fm-index.
 * @param [in] seq_parse_vec_vec [std::vector<std::vector<std::tuple<uint64_t, uint64_t>>>] empty RLZ_CHAR parse vectors equal to number of threads
 * @param [in] num_char_to_process [size_t] the number of chars that should be processed. Useful for the OpenMP parallelization.
@@ -170,7 +181,7 @@ void RLZ_CHAR::load_reverse_file_to_string(const std::string& input_file, std::s
 * @return void
 */
 
-void RLZ_CHAR::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 1024>& fm_index,
+void RLZ_CHAR::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>& fm_index,
         FM_Wrapper& fm_support,
         const std::map<char, uint64_t>& occs, 
         const std::string& seq_content,
@@ -204,16 +215,22 @@ void RLZ_CHAR::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 51
         pattern = next_char + pattern;
 
         std::tuple<size_t,size_t> previous_ranges = std::make_tuple(prev_left, prev_right);
+        auto back_start = std::chrono::high_resolution_clock::now();
         std::tuple<size_t,size_t> next_ranges = fm_support.backward_match(fm_index, occs, previous_ranges, next_char);
+        auto back_end = std::chrono::high_resolution_clock::now();
+        backward_match_time_char += back_end - back_start;
         next_left = std::get<0>(next_ranges);
         next_right = std::get<1>(next_ranges);
 
         // If same then that means no perfect match so we reset.
         if (next_left == next_right){
             uint64_t pattern_len = pattern.size() - 1; // -1 due to not matching the last character successfully
+            auto sa_start = std::chrono::high_resolution_clock::now();
             uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, prev_left);
             uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos; // 0 based involution formula of sa position to correct for the reverse string matching (will give pos in ref where pattern ends)
             uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len; // adjust the position to where pattern starts
+            auto sa_end = std::chrono::high_resolution_clock::now();
+            sa_time_char += sa_end - sa_start;
             seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
             prev_left = 0;
             prev_right = fm_index.bwt.size();
@@ -226,9 +243,12 @@ void RLZ_CHAR::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 51
         else if (i == end_loc + 1)
         {
             uint64_t pattern_len = pattern.size();
+            auto sa_start = std::chrono::high_resolution_clock::now();
             uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, next_left);
             uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos;
             uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len;
+            auto sa_end = std::chrono::high_resolution_clock::now();
+            sa_time_char += sa_end - sa_start;
             seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
         }
         // Currently in a perfect match
@@ -238,6 +258,116 @@ void RLZ_CHAR::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 51
         }
     }
 }
+
+
+/**
+* @brief Parses the sequence file in relation to the reference file
+*
+* This function does the RLZ_CHAR parsing of the sequence file. It parses relative to the original file content of the reference.
+* Fails if there is a character in the sequence that is not present in the reference.
+*
+* RLZ algorithm tries to greedily find the longest sequence substring match within the reference.
+* The RLZ parse in the end contains (pos, len) pairs
+* in relation to the reference such that the sequence can be reconstructed from only the RLZ parse and the reference
+* file. It is a O(n) algorithm. The size is the reference file + the RLZ parse.
+*
+* The algorithm implemented here is as follows.
+* 1. Starting from the last char of the reversed sequence file or sequence file chunk, check if char matches the reversed reference
+* (via backwards match with FM-index) 
+* 2a. If match, check if next char also matches (ex. aab. I know that b matches then check if ab matches etc...)
+* 2b. If match and end of sequence file or sequence file chunk, push current (pos,len) pair to parse vector
+* 2c. If mismatch, push (prev pos, len - 1) to parse stack. Reset search from char that caused mismatch.
+*
+* We stream the sequence file in this function
+*
+* @param [in] fm_index [sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>] the fm-index of the reference
+* @param [in] fm_support [FM_Wrapper] Utility object that allows us to do search and locate queries with fm-index.
+* @param [in] occs [std::map<char, uint64_t>] the number of occurences of each char in the ref file
+* @param [in] seq_file [std::string] the sequence file.
+* @param [in] seq_parse_vec [std::vector<std::tuple<uint64_t, uint64_t>>] empty RLZ_CHAR parse vector
+*
+* @return void
+*/
+
+void RLZ_CHAR::stream_parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>& fm_index,
+        FM_Wrapper& fm_support,
+        const std::map<char, uint64_t>& occs, 
+        const std::string& seq_file,
+        std::vector<std::tuple<uint64_t, uint64_t>>& seq_parse_vec)
+{
+    std::string pattern = "";
+    size_t prev_left = 0;
+    size_t prev_right = fm_index.bwt.size();
+    size_t next_left = 0;
+    size_t next_right = fm_index.bwt.size();
+    
+    std::ifstream sfile(seq_file);
+    if (!sfile) {
+        spdlog::error("Error opening {}", seq_file);
+        std::exit(EXIT_FAILURE);
+    }
+
+    bool retry = false;
+    char next_char;
+
+    // Process the file in reverse for backwards matching with FM-index.
+    while (sfile)
+    {
+        if (!retry) {  // Read a new character only if we're not retrying a char
+            sfile.get(next_char);
+            if (sfile.eof()) break; // Exit if end of file
+        }
+
+        pattern = next_char + pattern;
+
+        std::tuple<size_t,size_t> previous_ranges = std::make_tuple(prev_left, prev_right);
+        auto back_start = std::chrono::high_resolution_clock::now();
+        std::tuple<size_t,size_t> next_ranges = fm_support.backward_match(fm_index, occs, previous_ranges, next_char);
+        auto back_end = std::chrono::high_resolution_clock::now();
+        backward_match_time_char += back_end - back_start;
+        next_left = std::get<0>(next_ranges);
+        next_right = std::get<1>(next_ranges);
+
+        // If same then that means no perfect match so we reset.
+        if (next_left == next_right){
+            uint64_t pattern_len = pattern.size() - 1; // -1 due to not matching the last character successfully
+            auto sa_start = std::chrono::high_resolution_clock::now();
+            uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, prev_left);
+            uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos; // 0 based involution formula of sa position to correct for the reverse string matching (will give pos in ref where pattern ends)
+            uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len; // adjust the position to where pattern starts
+            auto sa_end = std::chrono::high_resolution_clock::now();
+            sa_time_char += sa_end - sa_start;
+            seq_parse_vec.emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
+            prev_left = 0;
+            prev_right = fm_index.bwt.size();
+            next_left = 0;
+            next_right = fm_index.bwt.size();
+            pattern = "";
+            retry = true;
+        }
+        // If at the end we are still in a perfect match, we save what we have. 
+        else if (sfile.peek() == EOF)
+        {
+            uint64_t pattern_len = pattern.size();
+            auto sa_start = std::chrono::high_resolution_clock::now();
+            uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, next_left);
+            uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos;
+            uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len;
+            auto sa_end = std::chrono::high_resolution_clock::now();
+            sa_time_char += sa_end - sa_start;
+            seq_parse_vec.emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
+            retry = false;
+        }
+        // Currently in a perfect match
+        else{
+            prev_left = next_left;
+            prev_right = next_right;
+            retry = false;
+        }
+    }
+    sfile.close();
+}
+
 
 /** 
 * @brief Calculates the occurances of each char in the provided text in lexicographical order
@@ -290,7 +420,7 @@ void RLZ_CHAR::calculate_occs(std::string content, std::map<char, uint64_t>& occ
 
 void RLZ_CHAR::compress(int threads)
 {
-    sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<127>>, 512, 1024> fm_index;
+    sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32> fm_index;
     
     // Creates the FM-index
     construct_im(fm_index, ref_content, 1);
@@ -313,6 +443,9 @@ void RLZ_CHAR::compress(int threads)
         parse(fm_index, fm_support, occs, seq_content, seq_parse_vec_vec, num_char_to_process, i, threads);
     }
 
+    spdlog::debug("Total FM-index time (s): {:.6f}", std::chrono::duration<double>(backward_match_time_char).count());
+    spdlog::debug("Total SA time (s): {:.6f}", std::chrono::duration<double>(sa_time_char).count());
+
     // Store tuples of (pos,len) in correct order in vector
     size_t chars_stored = 0;
     std::vector<std::tuple<uint64_t, uint64_t>> seq_parse;
@@ -330,11 +463,92 @@ void RLZ_CHAR::compress(int threads)
     spdlog::debug("The sequence was encoded in {} chars", seq_content.size());
     spdlog::debug("The rlz parse encodes for {} chars", chars_stored);
 
-    serialize(seq_parse);
+    auto serialize_start = std::chrono::high_resolution_clock::now();
+    serialize(seq_parse, seq_file);
+    auto serialize_end = std::chrono::high_resolution_clock::now();
+    serialize_time_char += serialize_end - serialize_start;
+    spdlog::debug("Total serialize time (s): {:.6f}", std::chrono::duration<double>(serialize_time_char).count());
 
     // Comment (Testing only)
     // print_serialize(seq_parse);
 }
+
+
+/**
+* @brief Compresses the sequence file in relation to the reference file.
+*
+* Creates a FM-index from the reversed reference string which we query using the reversed sequence string in order to simulate forward matching.
+* We first create the FM-index from the reveresed string representation of the reference.
+* We query the index one char at time from the reversed sequence string. When the sequence char does not have a match, 
+* we add the last matching ref position of the sequence and the length of the match to the parse. Then we 
+* restart the match at the last mismatch position. The parse is ultimately
+* stored in a vector in the correct order. The parse at the end is serialized to a file.
+*
+* We stream the sequence file in this function
+*
+* @param [in] seq_file [std::string] The sequence file 
+*
+* @return void
+* 
+* @warning Will fail if the sequence file contains a char not present in the reference file
+*
+*/
+
+void RLZ_CHAR::stream_compress(const std::string& seq_file)
+{
+    sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32> fm_index;
+    
+    // Creates the FM-index
+    construct_im(fm_index, ref_content, 1);
+
+    // Get the number of occurances of each char in lexicographical order
+    std::map<char, uint64_t> occs;
+    calculate_occs(ref_content, occs);
+
+    FM_Wrapper fm_support;
+
+    std::vector<std::tuple<uint64_t, uint64_t>> seq_parse_vec;
+
+    stream_parse(fm_index, fm_support, occs, seq_file, seq_parse_vec);
+    
+    spdlog::debug("Total FM-index time (s): {:.6f}", std::chrono::duration<double>(backward_match_time_char).count());
+    spdlog::debug("Total SA time (s): {:.6f}", std::chrono::duration<double>(sa_time_char).count());
+
+    // Store tuples of (pos,len) in correct order in vector
+    size_t chars_stored = 0;
+    std::vector<std::tuple<uint64_t, uint64_t>> seq_parse;
+    // Can process the parse vectors sequentially since the first vector contains the parse of the start of the non-reversed sequence.
+    for (int i = 0; i < seq_parse_vec.size(); i++)
+    {
+        chars_stored += std::get<1>(seq_parse_vec[i]);
+        seq_parse.emplace_back(seq_parse_vec[i]);
+        // spdlog::debug("Ref Pos: {}, Len: {}", std::get<0>(seq_parse.back()), std::get<1>(seq_parse.back()));
+    }
+    
+    // Get file size of sequence file
+    std::ifstream sfile(seq_file, std::ios::ate);
+    if (!sfile) {
+        spdlog::error("Error opening {}", seq_file);
+        std::exit(EXIT_FAILURE);
+    }
+
+    // Get the file size in bytes
+    std::streamsize sfile_size = sfile.tellg();
+    sfile.close();    
+
+    spdlog::debug("The sequence was encoded in {} chars", sfile_size);
+    spdlog::debug("The rlz parse encodes for {} chars", chars_stored);
+
+    auto serialize_start = std::chrono::high_resolution_clock::now();
+    serialize(seq_parse, seq_file);
+    auto serialize_end = std::chrono::high_resolution_clock::now();
+    serialize_time_char += serialize_end - serialize_start;
+    spdlog::debug("Total serialize time (s): {:.6f}", std::chrono::duration<double>(serialize_time_char).count());
+
+    // Comment (Testing only)
+    // print_serialize(seq_parse);
+}
+
 
 /**
 * @brief Serializes the parse of the sequence file
@@ -346,11 +560,12 @@ void RLZ_CHAR::compress(int threads)
 * (uint64_t byte: size num of pair) (uint64_t byte: size pos) (uint64_t byte: size len) (uint64_t byte: size pos) (uint64_t byte: size len) ...
 *  
 * @param[in] seq_parse [std::vector<std::tuple<uint64_t, uint64_t>>] The parse of the seq <(ref pos,len),(ref pos,len),(ref pos,len)... >
+* @param[in] seq_file [std::string] the sequence file name
 *
 * @return void
 */
 
-void RLZ_CHAR::serialize(const std::vector<std::tuple<uint64_t, uint64_t>>& seq_parse)
+void RLZ_CHAR::serialize(const std::vector<std::tuple<uint64_t, uint64_t>>& seq_parse, const std::string& seq_file)
 {
     std::ofstream ofs(seq_file + ".rlz", std::ios::binary);
     if (!ofs) {

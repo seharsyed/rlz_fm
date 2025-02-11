@@ -80,24 +80,46 @@ int main(int argc, char **argv)
             spdlog::debug("The reference file provided: {}", ref_file);
             spdlog::debug("The sequence file provided: {}", seq_file);
             spdlog::stopwatch sw_parser;
-            RLZ main_parser(ref_file, seq_file);
-            auto sw_parser_elapsed = sw_parser.elapsed();
-            spdlog::debug("Built main parser in {:.3} seconds", sw_parser_elapsed.count());
-            spdlog::stopwatch sw_ref;
-            spdlog::debug("Starting to store the reference file as a bit vector");
-            main_parser.load_reverse_file_to_bit_vector(ref_file, main_parser.ref_bit_array);
-            auto sw_ref_elapsed = sw_ref.elapsed();
-            spdlog::debug("Loaded file in {:.3} seconds", sw_ref_elapsed.count());
-            spdlog::stopwatch sw_seq;
-            spdlog::debug("Starting to store the sequence file as a bit vector");
-            main_parser.load_reverse_file_to_bit_vector(seq_file, main_parser.seq_bit_array);
-            auto sw_seq_elapsed = sw_ref.elapsed();
-            spdlog::debug("Loaded file in {:.3} seconds", sw_seq_elapsed.count());
-            spdlog::stopwatch sw_compress;
-            main_parser.compress(threads);
-            auto sw_compress_elapsed = sw_compress.elapsed();
+            // Stream the sequence file
+            if (threads == 1)
+            {
+                RLZ main_parser(ref_file);
+                auto sw_parser_elapsed = sw_parser.elapsed();
+                spdlog::debug("Built main parser in {:.3} seconds", sw_parser_elapsed.count());
+                spdlog::stopwatch sw_ref;
+                spdlog::debug("Starting to store the reference file as a bit vector");
+                main_parser.load_reverse_file_to_bit_vector(ref_file, main_parser.ref_bit_array);
+                auto sw_ref_elapsed = sw_ref.elapsed();
+                spdlog::debug("Loaded file in {:.3} seconds", sw_ref_elapsed.count());
+                spdlog::stopwatch sw_compress;
+                main_parser.stream_compress(seq_file);
+                auto sw_compress_elapsed = sw_compress.elapsed();
+                spdlog::debug("Compression function finished in {:.3} seconds", sw_compress_elapsed.count());
+
+            }
+            // Load the sequence file into memory
+            else
+            {
+                RLZ main_parser(ref_file, seq_file);
+                auto sw_parser_elapsed = sw_parser.elapsed();
+                spdlog::debug("Built main parser in {:.3} seconds", sw_parser_elapsed.count());
+                spdlog::stopwatch sw_ref;
+                spdlog::debug("Starting to store the reference file as a bit vector");
+                main_parser.load_reverse_file_to_bit_vector(ref_file, main_parser.ref_bit_array);
+                auto sw_ref_elapsed = sw_ref.elapsed();
+                spdlog::debug("Loaded file in {:.3} seconds", sw_ref_elapsed.count());
+                spdlog::stopwatch sw_seq;
+                spdlog::debug("Starting to store the sequence file as a bit vector");
+                main_parser.load_reverse_file_to_bit_vector(seq_file, main_parser.seq_bit_array);
+                auto sw_seq_elapsed = sw_ref.elapsed();
+                spdlog::debug("Loaded file in {:.3} seconds", sw_seq_elapsed.count());
+                spdlog::stopwatch sw_compress;
+                main_parser.compress(threads);
+                auto sw_compress_elapsed = sw_compress.elapsed();
+                spdlog::debug("Compression function finished in {:.3} seconds", sw_compress_elapsed.count());
+            }
+
             auto elapsed = sw.elapsed();
-            spdlog::debug("Compression function finished in {:.3} seconds", sw_compress_elapsed.count());
             spdlog::debug("Finished compressing the sequence file");
             spdlog::info("Compressed in {:.3} seconds", elapsed.count());
             spdlog::info("#############################################################");
@@ -146,24 +168,44 @@ int main(int argc, char **argv)
             spdlog::debug("The reference file provided: {}", ref_file);
             spdlog::debug("The sequence file provided: {}", seq_file);
             spdlog::stopwatch sw_parser;
-            RLZ_CHAR main_parser(ref_file, seq_file);
-            auto sw_parser_elapsed = sw_parser.elapsed();
-            spdlog::debug("Built main parser in {:.3} seconds", sw_parser_elapsed.count());
-            spdlog::stopwatch sw_ref;
-            spdlog::debug("Starting to read the reference file");
-            main_parser.load_reverse_file_to_string(ref_file, main_parser.ref_content);
-            auto sw_ref_elapsed = sw_ref.elapsed();
-            spdlog::debug("Finished reading file in {:.3} seconds", sw_ref_elapsed.count());
-            spdlog::stopwatch sw_seq;
-            spdlog::debug("Starting to read the sequence file");
-            main_parser.load_reverse_file_to_string(seq_file, main_parser.seq_content);
-            auto sw_seq_elapsed = sw_ref.elapsed();
-            spdlog::debug("Finished reading file in {:.3} seconds", sw_seq_elapsed.count());
-            spdlog::stopwatch sw_compress;
-            main_parser.compress(threads);
-            auto sw_compress_elapsed = sw_compress.elapsed();
+            // Stream the sequence file
+            if (threads == 1)
+            {
+                RLZ_CHAR main_parser(ref_file);
+                auto sw_parser_elapsed = sw_parser.elapsed();
+                spdlog::debug("Built main parser in {:.3} seconds", sw_parser_elapsed.count());
+                spdlog::stopwatch sw_ref;
+                spdlog::debug("Starting to read the reference file");
+                main_parser.load_reverse_file_to_string(ref_file, main_parser.ref_content);
+                auto sw_ref_elapsed = sw_ref.elapsed();
+                spdlog::debug("Finished reading file in {:.3} seconds", sw_ref_elapsed.count());
+                spdlog::stopwatch sw_compress;
+                main_parser.stream_compress(seq_file);
+                auto sw_compress_elapsed = sw_compress.elapsed();
+                spdlog::debug("Compression function finished in {:.3} seconds", sw_compress_elapsed.count());
+            }
+            // Load the sequence file into memory
+            else
+            {
+                RLZ_CHAR main_parser(ref_file, seq_file);
+                auto sw_parser_elapsed = sw_parser.elapsed();
+                spdlog::debug("Built main parser in {:.3} seconds", sw_parser_elapsed.count());
+                spdlog::stopwatch sw_ref;
+                spdlog::debug("Starting to read the reference file");
+                main_parser.load_reverse_file_to_string(ref_file, main_parser.ref_content);
+                auto sw_ref_elapsed = sw_ref.elapsed();
+                spdlog::debug("Finished reading file in {:.3} seconds", sw_ref_elapsed.count());
+                spdlog::stopwatch sw_seq;
+                spdlog::debug("Starting to read the sequence file");
+                main_parser.load_reverse_file_to_string(seq_file, main_parser.seq_content);
+                auto sw_seq_elapsed = sw_ref.elapsed();
+                spdlog::debug("Finished reading file in {:.3} seconds", sw_seq_elapsed.count());
+                spdlog::stopwatch sw_compress;
+                main_parser.compress(threads);
+                auto sw_compress_elapsed = sw_compress.elapsed();
+                spdlog::debug("Compression function finished in {:.3} seconds", sw_compress_elapsed.count());
+            }
             auto elapsed = sw.elapsed();
-            spdlog::debug("Compression function finished in {:.3} seconds", sw_compress_elapsed.count());
             spdlog::debug("Finished compressing the sequence file");
             spdlog::info("Compressed in {:.3} seconds", elapsed.count());
             spdlog::info("#############################################################");
