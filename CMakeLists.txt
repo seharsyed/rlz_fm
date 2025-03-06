@@ -104,26 +104,27 @@ find_path(SDSL_SRC sdsl HINTS ${CMAKE_CURRENT_BINARY_DIR}/include PATHS ${CONDA_
 if(NOT SDSL_LIB OR DIVSUFSORT_LIB OR DIVSUFSORT64_LIB)
     message(STATUS "sdsl library not found. Building from submodule...")
     set(sdsl_SOURCE_DIR ${THIRDPARTY_INCLUDE_DIR}/sdsl-lite)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/sdsl/logs)
     # Install in the current binary dir
-    execute_process(COMMAND ./install.sh ${CMAKE_CURRENT_BINARY_DIR}
+    execute_process(COMMAND ./install.sh ${CMAKE_CURRENT_BINARY_DIR}/sdsl
             RESULT_VARIABLE result
             WORKING_DIRECTORY ${sdsl_SOURCE_DIR} 
-            OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log
-            ERROR_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log)
+            OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/sdsl/logs/sdsl.log
+            ERROR_FILE ${CMAKE_CURRENT_BINARY_DIR}/sdsl/logs/sdsl.log)
     file(APPEND ${INSTALL_FILE} "MESSAGE(STATUS \"Installing sdsl.\")\n")
-    file(APPEND ${INSTALL_FILE} "execute_process(COMMAND ./install.sh \${CMAKE_INSTALL_PREFIX}
+    file(APPEND ${INSTALL_FILE} "execute_process(COMMAND ./install.sh \${CMAKE_INSTALL_PREFIX}/sdsl
             WORKING_DIRECTORY ${sdsl_SOURCE_DIR} 
-            OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log
-            ERROR_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log)\n")
+            OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/sdsl/logs/sdsl.log
+            ERROR_FILE ${CMAKE_CURRENT_BINARY_DIR}/sdsl/logs/sdsl.log)\n")
     if(result)
         message(FATAL_ERROR "CMake step for sdsl-lite failed: ${result}")
     endif()
     
-    set(SDSL_SRC ${CMAKE_CURRENT_BINARY_DIR}/include CACHE PATH "Path to include dir" FORCE)
-    set(DIVSUFSORT_SRC ${CMAKE_CURRENT_BINARY_DIR}/include CACHE PATH "Path to include dir" FORCE)
-    set(SDSL_LIB ${CMAKE_CURRENT_BINARY_DIR}/lib/libsdsl.a CACHE PATH "Path to libsdsl.a" FORCE)
-    set(DIVSUFSORT_LIB ${CMAKE_CURRENT_BINARY_DIR}/lib/libdivsufsort.a CACHE PATH "Path to libdivsufsort.a" FORCE)
-    set(DIVSUFSORT64_LIB ${CMAKE_CURRENT_BINARY_DIR}/lib/libdivsufsort64.a CACHE PATH "Path to libdivsufsort64.a" FORCE)
+    set(SDSL_SRC ${CMAKE_CURRENT_BINARY_DIR}/sdsl/include CACHE PATH "Path to include dir" FORCE)
+    set(DIVSUFSORT_SRC ${CMAKE_CURRENT_BINARY_DIR}/sdsl/include CACHE PATH "Path to include dir" FORCE)
+    set(SDSL_LIB ${CMAKE_CURRENT_BINARY_DIR}/sdsl/lib/libsdsl.a CACHE PATH "Path to libsdsl.a" FORCE)
+    set(DIVSUFSORT_LIB ${CMAKE_CURRENT_BINARY_DIR}/sdsl/lib/libdivsufsort.a CACHE PATH "Path to libdivsufsort.a" FORCE)
+    set(DIVSUFSORT64_LIB ${CMAKE_CURRENT_BINARY_DIR}/sdsl/lib/libdivsufsort64.a CACHE PATH "Path to libdivsufsort64.a" FORCE)
 
 else()
     message(STATUS "sdsl library found at ${SDSL_LIB}.")
