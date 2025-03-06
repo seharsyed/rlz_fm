@@ -51,6 +51,7 @@ Common steps (for all encoding types):
 ```
 git clone https://github.com/rvarki/RLZ.git
 cd RLZ
+git submodule update --init --recursive
 mkdir build
 cd build
 cmake ..

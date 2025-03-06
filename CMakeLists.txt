@@ -1,5 +1,3 @@
-include(FetchContent)
-
 cmake_minimum_required (VERSION 3.15)
 project (rlz)
 
@@ -87,7 +85,7 @@ endif()
 # DIVSUFSORT
 find_library(DIVSUFSORT_LIB divsufsort HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib PATHS ${CONDA_PREFIX}/lib)
 if(NOT DIVSUFSORT_LIB)
-    message(STATUS "divsufsort library not found. Building as an external content")
+    message(STATUS "divsufsort library not found. Building from submodule...")
 else()
     message(STATUS "divsufsort library found at ${DIVSUFSORT_LIB}.")
 endif()
@@ -95,7 +93,7 @@ endif()
 # DIVSUFSORT64
 find_library(DIVSUFSORT64_LIB divsufsort64 HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib PATHS ${CONDA_PREFIX}/lib)
 if(NOT DIVSUFSORT64_LIB)
-    message(STATUS "divsufsort64 library not found. Building as an external content")
+    message(STATUS "divsufsort64 library not found. Building from submodule...")
 else()
     message(STATUS "divsufsort64 library found at ${DIVSUFSORT64_LIB}.")
 endif()
@@ -103,31 +101,24 @@ endif()
 # SDSL
 find_library(SDSL_LIB sdsl HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib PATHS ${CONDA_PREFIX}/lib)
 find_path(SDSL_SRC sdsl HINTS ${CMAKE_CURRENT_BINARY_DIR}/include PATHS ${CONDA_PREFIX}/include)
-if(NOT SDSL_LIB)
-    message(STATUS "sdsl library not found. Building as an external content")
-    FetchContent_Declare(sdsl
-            GIT_REPOSITORY "https://github.com/simongog/sdsl-lite.git"
-            # GIT_TAG "v2.1.1"
-    )
-
-    if(NOT sdsl_POPULATED)
-        FetchContent_Populate(sdsl)
-        # Install in the current binary dir
-        execute_process(COMMAND ./install.sh ${CMAKE_CURRENT_BINARY_DIR}
-                RESULT_VARIABLE result
-                WORKING_DIRECTORY ${sdsl_SOURCE_DIR} 
-                OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log
-                ERROR_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log)
-        file(APPEND ${INSTALL_FILE} "MESSAGE(STATUS \"Installing sdsl.\")\n")
-        file(APPEND ${INSTALL_FILE} "execute_process(COMMAND ./install.sh \${CMAKE_INSTALL_PREFIX}
-                WORKING_DIRECTORY ${sdsl_SOURCE_DIR} 
-                OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log
-                ERROR_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log)\n")
-        if(result)
-            message(FATAL_ERROR "CMake step for sdsl-lite failed: ${result}")
-        endif()
+if(NOT SDSL_LIB OR DIVSUFSORT_LIB OR DIVSUFSORT64_LIB)
+    message(STATUS "sdsl library not found. Building from submodule...")
+    set(sdsl_SOURCE_DIR ${THIRDPARTY_INCLUDE_DIR}/sdsl-lite)
+    # Install in the current binary dir
+    execute_process(COMMAND ./install.sh ${CMAKE_CURRENT_BINARY_DIR}
+            RESULT_VARIABLE result
+            WORKING_DIRECTORY ${sdsl_SOURCE_DIR} 
+            OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log
+            ERROR_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log)
+    file(APPEND ${INSTALL_FILE} "MESSAGE(STATUS \"Installing sdsl.\")\n")
+    file(APPEND ${INSTALL_FILE} "execute_process(COMMAND ./install.sh \${CMAKE_INSTALL_PREFIX}
+            WORKING_DIRECTORY ${sdsl_SOURCE_DIR} 
+            OUTPUT_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log
+            ERROR_FILE ${CMAKE_CURRENT_BINARY_DIR}/logs/sdsl.log)\n")
+    if(result)
+        message(FATAL_ERROR "CMake step for sdsl-lite failed: ${result}")
     endif()
-
+    
     set(SDSL_SRC ${CMAKE_CURRENT_BINARY_DIR}/include CACHE PATH "Path to include dir" FORCE)
     set(DIVSUFSORT_SRC ${CMAKE_CURRENT_BINARY_DIR}/include CACHE PATH "Path to include dir" FORCE)
     set(SDSL_LIB ${CMAKE_CURRENT_BINARY_DIR}/lib/libsdsl.a CACHE PATH "Path to libsdsl.a" FORCE)
