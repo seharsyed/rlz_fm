@@ -7,7 +7,7 @@ However, character-level encoding can fail if the reference file does not contai
 do the encoding at the bit-level. Doing the encoding this way prevents the issue that occurs when the sequence contains a character that is not present in the reference.
 However, the parse might be larger than the character-level parse due to encoding the bit representation of the sequence file. The decompression expects that the files were originally ASCII (8 bit) encoded.
 
-The software performs pattern matching with the FM-index by reversing both the sequence and the reference text internally. This approach enables forward matching and determines the length of the forward match. The correct reference position is obtained by applying an involution to the suffix array position retrieved from the FM-index (which is built on the reversed reference text), a constant-time operation. 
+The software performs pattern matching by streaming the sequence file char by char (or bit by bit) against the FM-index of the reversed reference. This approach enables the software to simulate forward matching of the sequence file against the reference. The correct reference positions of the matches are obtained by applying an involution to the suffix array positions retrieved from the FM-index (which is built on the reversed reference text), a constant-time operation. 
 
 ## Algorithm Workflow
 
@@ -19,12 +19,12 @@ Bit-level encoding:
 
 Common steps (for all encoding types):
 
-1. Reverse the reference and sequence files.
+1. Reverse the reference sequence.
 
 2. Build an FM-index from the reversed reference (in bit or character form).
 
-3. Perform reverse matching:
-    Match each character or bit of the reversed sequence against the reversed reference using the FM-index's backward matching capabilities (to simulate forward matching).
+3. Perform "backwards" (forward) match:
+    Match each character or bit of the sequence against the reversed reference using the FM-index's backward matching capabilities (to simulate forward matching).
    
     3a. If a match is found, check if the next character or bit also matches.
    
@@ -79,13 +79,10 @@ This command will produce the following file in the data/dna directory: `dna_seq
 > [!NOTE]
 > Multithreading is supported in the compression step with the -t [num. of threads] option which can significantly make the compression step faster. However, the RLZ parse is slightly different from what you would get if you run with a single thread. The reason is we cannot identify phrases that span where the file was split. Potentially might add an additional thread number of parse entries that would not exist if you ran with a single thread.
 
-> [!NOTE]
-> The compression ratio is quite high in this example. The reason for this is partly due to the similarity between the reference and sequence file. Another reason is due to writing the parse with uint64_t numbers. For small files, using 8 bytes for each number is too large and therefore wasteful. Maybe will change in the future. 
-
 2. To decompress the file, run the following command
 
 ```
-./rlz -r ../data/dna/dna_ref.txt -s ../data/dna/dna_seq.txt -d
+./rlz -r ../data/dna/dna_ref.txt -p ../data/dna/dna_seq.txt.rlz -d
 ```
 This command should produce a file called `dna_seq.txt.out` in the data/dna directory. This is the decompressed sequence file.
 
@@ -112,7 +109,7 @@ This command will produce the following file in the data/english directory: `eng
 2. To decompress the file, run the following command
 
 ```
-./rlz -r ../data/english/english_ref.txt -s ../data/english/english_seq.txt --bit -d
+./rlz -r ../data/english/english_ref.txt -p ../data/english/english_seq.txt.rlz --bit -d
 ```
 This command should produce a file called `english_seq.txt.out` in the data/english directory. This is the decompressed sequence file.
 
