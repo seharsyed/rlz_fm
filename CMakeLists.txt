@@ -83,7 +83,7 @@ if(OPENMP_FOUND)
 endif()
 
 # DIVSUFSORT
-find_library(DIVSUFSORT_LIB divsufsort HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib PATHS ${CONDA_PREFIX}/lib)
+find_library(DIVSUFSORT_LIB divsufsort HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/sdsl/lib PATHS ${CONDA_PREFIX}/lib)
 if(NOT DIVSUFSORT_LIB)
     message(STATUS "divsufsort library not found. Building from submodule...")
 else()
@@ -91,7 +91,7 @@ else()
 endif()
 
 # DIVSUFSORT64
-find_library(DIVSUFSORT64_LIB divsufsort64 HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib PATHS ${CONDA_PREFIX}/lib)
+find_library(DIVSUFSORT64_LIB divsufsort64 HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/sdsl/lib PATHS ${CONDA_PREFIX}/lib)
 if(NOT DIVSUFSORT64_LIB)
     message(STATUS "divsufsort64 library not found. Building from submodule...")
 else()
@@ -99,9 +99,9 @@ else()
 endif()
 
 # SDSL
-find_library(SDSL_LIB sdsl HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib PATHS ${CONDA_PREFIX}/lib)
-find_path(SDSL_SRC sdsl HINTS ${CMAKE_CURRENT_BINARY_DIR}/include PATHS ${CONDA_PREFIX}/include)
-if(NOT SDSL_LIB OR DIVSUFSORT_LIB OR DIVSUFSORT64_LIB)
+find_library(SDSL_LIB sdsl HINTS ${CMAKE_CURRENT_BINARY_DIR}/lib ${CMAKE_CURRENT_BINARY_DIR}/sdsl/lib PATHS ${CONDA_PREFIX}/lib)
+find_path(SDSL_SRC sdsl HINTS ${CMAKE_CURRENT_BINARY_DIR}/include ${CMAKE_CURRENT_BINARY_DIR}/sdsl/include PATHS ${CONDA_PREFIX}/include)
+if(NOT SDSL_LIB OR NOT DIVSUFSORT_LIB OR NOT DIVSUFSORT64_LIB)
     message(STATUS "sdsl library not found. Building from submodule...")
     set(sdsl_SOURCE_DIR ${THIRDPARTY_INCLUDE_DIR}/sdsl-lite)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/sdsl/logs)
