@@ -261,7 +261,7 @@ void RLZ::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>&
                 --i; // Do not increment if no perfect match
             }
             // If at the end we are still in a perfect match, we save what we have. 
-            else if (i == 7 && count == num_char_to_process)
+            else if (i == 7 && count == num_char_to_process || i == 7 && sfile.peek() == EOF)
             {
                 auto sa_start = std::chrono::high_resolution_clock::now();
                 uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, next_left);
