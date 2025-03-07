@@ -309,12 +309,17 @@ void RLZ_CHAR::stream_parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15
 
     bool retry = false;
     char next_char;
+    size_t count = 0; // Keep track of how many characters processed
 
     // Process the file in reverse for backwards matching with FM-index.
     while (sfile)
     {
         if (!retry) {  // Read a new character only if we're not retrying a char
             sfile.get(next_char);
+            count++;
+            if (count % 10000 == 0){
+                spdlog::debug("******** Processed {} unique chars in sequence file. ********", count);
+            }
             if (sfile.eof()) break; // Exit if end of file
         }
 
@@ -424,10 +429,12 @@ void RLZ_CHAR::compress(int threads)
     
     // Creates the FM-index
     construct_im(fm_index, ref_content, 1);
+    spdlog::debug("Finished building the FM-index");
 
     // Get the number of occurances of each char in lexicographical order
     std::map<char, uint64_t> occs;
     calculate_occs(ref_content, occs);
+    spdlog::debug("Finished building compressed F column");
 
     FM_Wrapper fm_support;
 
@@ -500,10 +507,12 @@ void RLZ_CHAR::stream_compress(const std::string& seq_file)
     
     // Creates the FM-index
     construct_im(fm_index, ref_content, 1);
+    spdlog::debug("Finished building the FM-index");
 
     // Get the number of occurances of each char in lexicographical order
     std::map<char, uint64_t> occs;
     calculate_occs(ref_content, occs);
+    spdlog::debug("Finished building compressed F column");
 
     FM_Wrapper fm_support;
 

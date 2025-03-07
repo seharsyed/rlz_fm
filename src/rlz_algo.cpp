@@ -321,12 +321,17 @@ void RLZ::stream_parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 1
     char byte;
     sdsl::bit_vector seq_bit_array;
     seq_bit_array.resize(8);
+    size_t count = 0; // Keep track of how many bits processed
 
     // Process the file in reverse for backwards matching with FM-index.
     while (sfile)
     {
         if (!retry) {  // Read a new character only if we're not retrying a char
             sfile.get(byte);
+            count++;
+            if (count % 10000 == 0){
+                spdlog::debug("******** Processed {} bits in sequence file. ********", count * 8);
+            }
             if (sfile.eof()) break; // Exit if end of file
             for (int i = 7; i >= 0; --i) {
                 seq_bit_array[7-i] = (byte >> i) & 1; // Here it gets stored in reverse order (0 pos = most sig bit, 1 pos = 2nd most sig bit)
@@ -449,8 +454,10 @@ void RLZ::compress(int threads)
 
     // Creates the FM-index
     construct_im(fm_index, binary_reference_text, 1);
+    spdlog::debug("Finished building the FM-index");
     std::map<char, uint64_t> occs;
     calculate_occs(binary_reference_text, occs);
+    spdlog::debug("Finished building compressed F column");
 
     FM_Wrapper fm_support;
     
@@ -533,8 +540,10 @@ void RLZ::stream_compress(const std::string& seq_file)
 
     // Creates the FM-index
     construct_im(fm_index, binary_reference_text, 1);
+    spdlog::debug("Finished building the FM-index");
     std::map<char, uint64_t> occs;
     calculate_occs(binary_reference_text, occs);
+    spdlog::debug("Finished building compressed F column");
 
     FM_Wrapper fm_support;
     
