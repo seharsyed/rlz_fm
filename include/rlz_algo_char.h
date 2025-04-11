@@ -1,3 +1,10 @@
+/*
+* RLZ - Compute the RLZ parse of a sequence file using a reference file
+* Copyright (C) 2025-current Rahul Varki
+* Licensed under the GNU General Public License v3 or later.
+* See the LICENSE file or <https://www.gnu.org/licenses/> for details.
+*/
+
 #ifndef RLZ_ALGO_CHAR_H
 #define RLZ_ALGO_CHAR_H
 
