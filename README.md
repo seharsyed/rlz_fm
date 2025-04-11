@@ -125,7 +125,7 @@ There should be no output from this command if compressed and decompressed corre
 
 ### License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/rvarki/rlz/blob/main/LICENSE) file for details
+This project is licensed under the GNU License - see the [LICENSE](https://github.com/rvarki/rlz/blob/main/LICENSE) file for details
 
 ## Dependencies
 - [SDSL](https://github.com/simongog/sdsl-lite)
