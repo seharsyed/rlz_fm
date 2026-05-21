@@ -1,5 +1,16 @@
 # Relative Lempel-Ziv (RLZ)
 
+```
+ooooooooo.   ooooo         oooooooooooo 
+`888   `Y88. `888'        d'""""""d888' 
+ 888   .d88'  888               .888P   
+ 888ooo88P'   888              d888'    
+ 888`88b.     888            .888P      
+ 888  `88b.   888       o   d888'    .P 
+o888o  o888o o888ooooood8 .8888888888P  
+                                        v1.1.0
+```
+
 ## Description
 
 This software computes the Relative Lempel Ziv (RLZ) parse of the target sequence file using a reference file. By default, the software does character-level encoding.
@@ -15,7 +26,7 @@ To compress the target sequence file relative to a reference file, the software 
 
 Bit-level encoding:
 
-0. Convert both the reference and sequence files to their binary representation.
+0. Convert both the reference and sequence files to their "binary" representation.
 
 Common steps (for all encoding types):
 
@@ -62,7 +73,7 @@ make -j
 
 After building the project, an executable named rlz will be created in the build directory. Run it with:
 ```
-./rlz -r [reference file] -s [file to compress] [options] 
+./rlz compress -r [reference file] -s [file to compress] [options] 
 ```
 
 ### Default Compression Example
@@ -72,7 +83,7 @@ In this section, we will go through a small example using the default character-
 1. To compress the sequence file with character compression, run the following command from the build directory
 
 ```
-./rlz -r ../data/dna/dna_ref.txt -s ../data/dna/dna_seq.txt
+./rlz compress -r ../data/dna/dna_ref.txt -s ../data/dna/dna_seq.txt
 ```
 This command will produce the following file in the data/dna directory: `dna_seq.txt.rlz`. The .rlz file contains the RLZ parse.
 
@@ -82,7 +93,7 @@ This command will produce the following file in the data/dna directory: `dna_seq
 2. To decompress the file, run the following command
 
 ```
-./rlz -r ../data/dna/dna_ref.txt -p ../data/dna/dna_seq.txt.rlz -d
+./rlz decompress -r ../data/dna/dna_ref.txt -p ../data/dna/dna_seq.txt.rlz 
 ```
 This command should produce a file called `dna_seq.txt.out` in the data/dna directory. This is the decompressed sequence file.
 
@@ -101,7 +112,7 @@ In this section, we will go through a small example using the bit-level compress
 1. To compress the sequence file, run the following command from the build directory
 
 ```
-./rlz -r ../data/english/english_ref.txt -s ../data/english/english_seq.txt --bit
+./rlz compress -r ../data/english/english_ref.txt -s ../data/english/english_seq.txt --bit
 ```
 
 This command will produce the following file in the data/english directory: `english_seq.txt.rlz`. The .rlz file contains the RLZ parse.
@@ -109,7 +120,7 @@ This command will produce the following file in the data/english directory: `eng
 2. To decompress the file, run the following command
 
 ```
-./rlz -r ../data/english/english_ref.txt -p ../data/english/english_seq.txt.rlz --bit -d
+./rlz decompress -r ../data/english/english_ref.txt -p ../data/english/english_seq.txt.rlz --bit
 ```
 This command should produce a file called `english_seq.txt.out` in the data/english directory. This is the decompressed sequence file.
 
@@ -133,7 +144,5 @@ This project is licensed under the GNU License - see the [LICENSE](https://githu
 - [spdlog](https://github.com/gabime/spdlog)
 
 ## Acknowledgements
-
-- [Dhruv R. Makwana](https://github.com/Dhruv-mak) [Helped develop the code]
 
 - [S. Kuruppu, S. J. Puglisi and J. Zobel, Relative Lempel-Ziv Compression of Genomes for Large-Scale Storage and Retrieval](http://dx.doi.org/10.1007/978-3-642-16321-0_20). Proc. 17th International Symposium on String Processing and Information Retrieval (SPIRE 2010) Lecture Notes in Computer Science, Volume 6393, (2010) pp. 201-206. 

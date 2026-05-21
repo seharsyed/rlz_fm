@@ -15,19 +15,19 @@
 #include <vector>
 #include <tuple>
 #include <map>
+#include "utility.h"
 
 class FM_Wrapper 
 {
     public:
         FM_Wrapper();
         ~FM_Wrapper();
-        std::tuple<size_t, size_t> backward_match(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>& fm_index,
-                                                const std::map<char, uint64_t>& occs, 
+        std::tuple<size_t, size_t> backward_match(const rlz_fm_index_t& fm_index,
+                                                const std::vector<size_t>& occs, 
                                                 const std::tuple<size_t, size_t>& prev_backward_range,
                                                 const char next_char);
         
-        size_t get_suffix_array_value(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>& fm_index, 
-                                        const size_t location);
+        size_t get_suffix_array_value(const rlz_fm_index_t& fm_index, const size_t location);
 };
 
 

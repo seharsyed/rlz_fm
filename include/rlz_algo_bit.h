@@ -5,153 +5,192 @@
 * See the LICENSE file or <https://www.gnu.org/licenses/> for details.
 */
 
-#include "rlz_algo.h"
+#ifndef RLZ_ALGO_BIT_H
+#define RLZ_ALGO_BIT_H
+
 #include "fm_wrapper.h"
-#include <fstream>
-#include <cstdlib>
 #include <sdsl/bit_vectors.hpp>
+#include <sdsl/csa_wt.hpp>
+#include <sdsl/wavelet_trees.hpp>
 #include <sdsl/suffix_arrays.hpp>
 #include <sdsl/int_vector.hpp>
+#include <fstream>
+#include <filesystem>
+#include <system_error>
 #include <vector>
 #include <tuple>
+#include <map>
+#include <string>
+#include <cstdlib>
 #include <cstdio>
 #include <stack>
 #include <omp.h>
-#include <map>
+#include <chrono>
+#include <algorithm>
 #include "spdlog/spdlog.h"
 #include "spdlog/stopwatch.h"
-#include <chrono>
 
 std::chrono::duration<double> backward_match_time{0.0};
 std::chrono::duration<double> sa_time{0.0};
 std::chrono::duration<double> serialize_time{0.0};
 
+template <typename int_t>
+class RLZ_BIT {
+    public:
+        std::string ref_file;
+        sdsl::bit_vector ref_bit_array;
+
+        RLZ_BIT(const std::string ref_file);
+        ~RLZ_BIT();
+
+        void compress(const std::string& seq_file, int threads, size_t max_len);
+
+        void parse(const rlz_fm_index_t& fm_index,
+            FM_Wrapper& fm_support,
+            const std::vector<size_t>& occs,
+            const std::string& seq_file,
+            std::vector<std::vector<std::tuple<int_t, int_t>>>& seq_parse_vec_vec,
+            size_t num_bits_to_process,
+            size_t loop_iter,
+            size_t num_threads,
+            size_t max_len);
+
+        void decompress(const std::string& parse_file);
+        void load_reference_bit(const std::string& ref_file, sdsl::bit_vector& ref_bit_array);
+        void load_reverse_reference_bit(const std::string& ref_file, sdsl::bit_vector& ref_bit_array);
+        void calculate_occs(std::string& content, std::vector<size_t>& occs);
+        void serialize(const std::vector<std::tuple<int_t, int_t>>& seq_parse, const std::string& seq_file);
+        std::vector<std::tuple<int_t, int_t>> deserialize(const std::string& parse_file);
+
+        void bits_to_str(sdsl::bit_vector bit_array, std::string prefix);
+        void print_serialize(const std::vector<std::tuple<int_t, int_t>>& seq_parse, const std::string& seq_file);
+};
+
+
 /**
-* @brief Constuctor of RLZ class.
+* @brief Constuctor of RLZ_BIT class.
 * @param[in] ref_file [string] Path to reference file 
 */
-
-RLZ::RLZ(const std::string ref_file): ref_file(ref_file){}
+template<typename int_t>
+RLZ_BIT<int_t>::RLZ_BIT(const std::string ref_file): ref_file(ref_file){}
 
 /**
-* @brief Destructor of RLZ class.
+* @brief Destructor of RLZ_BIT class.
 *
 * Currently does nothing.
 *
 */
-
-RLZ::~RLZ(){}
+template<typename int_t>
+RLZ_BIT<int_t>::~RLZ_BIT(){}
 
 /**
-* @brief Loads the file content into a bit vector.
+* @brief Reads the "bits" of the reference and stores its content.
 *
-* Loads the file content directly into a sdsl bit vector. Opens the input file in binary mode
-* and moves pointer at end of file to get file size quickly. We then resize the bit vector
-* to be large enough to hold the file content in bits. Read file byte by byte and store
-* in bit vector.   
+* Loads the reference content directly into an SDSL bit vector. Obtains the file size
+* using filesystem metadata, performs a bulk binary read into an in-memory buffer, 
+* and populates the bit vector efficiently from RAM.   
 *
-* @param[in] input_file [string] Path to either the reference or sequence file 
-* @param[in] bit_array [sdsl::bit_vector] The corresponding bit array to store the file
+* @param[in] ref_file Path to the reference file
+* @param[in] ref_bit_array Place where the reference content is stored.
 * @return void
 */
-
-void RLZ::load_file_to_bit_vector(const std::string& input_file, sdsl::bit_vector& bit_array)
+template<typename int_t>
+void RLZ_BIT<int_t>::load_reference_bit(const std::string& ref_file, sdsl::bit_vector& ref_bit_array)
 {
+    spdlog::debug("Reading reference content bits");
     spdlog::stopwatch sw_convert;
-    spdlog::debug("Reading file and creating bit array");
 
-    // std::ios::ate moves cursor to end of file
-    std::ifstream file(input_file, std::ios::binary | std::ios::ate);
-    if (!file) {
-        spdlog::error("Error opening {}", input_file);
+    // Getting size of the reference
+    std::error_code ec;
+    uintmax_t ref_size = std::filesystem::file_size(ref_file, ec);
+    if (ec) {
+        spdlog::error("Error getting file size for {}: {}", ref_file, ec.message());
         std::exit(EXIT_FAILURE);
     }
 
-    // Get the file size in bytes
-    std::streamsize file_size = file.tellg();
-    // std::ios::beg moves cursor to beginning
-    file.seekg(0, std::ios::beg);
+    // Opening reference
+    std::ifstream ref(ref_file, std::ios::binary);
+    if (!ref) {
+        spdlog::error("Error opening {}", ref_file);
+        std::exit(EXIT_FAILURE);
+    }
 
-    // Resize the bit array to hold the number of bits required
-    bit_array.resize(file_size * 8);
+    // Preloading size and loading reference
+    std::vector<char> ref_buffer(ref_size);
+    if (!ref.read(ref_buffer.data(), ref_size)) {
+        spdlog::error("Error reading data from {}", ref_file);
+        std::exit(EXIT_FAILURE);
+    }
+    ref.close();
 
-    // Read the file and populate the bit vector
-    char byte;
+    // Resize the SDSL bit array to hold the total number of bits required
+    ref_bit_array.resize(ref_size * 8);
+
+    // Populate the bit vector entirely from memory
     std::size_t bit_index = 0;
-    while (file.get(byte)) {
-        // Starts from most sig bit of byte becoming least significant bit and then mask other bits and store in bit array.
-        // This stores the bits of the byte in order.
+    for (char byte : ref_buffer) {
         for (int i = 7; i >= 0; --i) {
-            bit_array[bit_index++] = (byte >> i) & 1;
+            ref_bit_array[bit_index++] = (byte >> i) & 1;
         }
     }
 
-    file.close();
     auto sw_convert_elapsed = sw_convert.elapsed();
     spdlog::debug("Finished creating bit array in {:.3} seconds", sw_convert_elapsed.count());
-
-    // spdlog::stopwatch sw_save;
-    // spdlog::debug("Saving bit array sdsl object to file");
-    //// Save the bit vector to a file
-    // sdsl::store_to_file(bit_array, input_file + ".sdsl");
-    // auto sw_save_elapsed = sw_save.elapsed();
-    // spdlog::debug("Finished saving in {:.3} seconds", sw_save_elapsed.count());
 }
 
 /**
-* @brief Loads the reversed file content into a bit vector.
+* @brief Reads the "bits" of the reversed reference and stores its content.
 *
-* Loads the reversed file content directly into a sdsl bit vector. Opens the input file in binary mode
-* and moves pointer at end of file to get file size quickly. We then resize the bit vector
-* to be large enough to hold the file content in bits. Read file byte by byte and store
-* in bit vector.   
+* Loads the reversed file content directly into an SDSL bit vector. Obtains the file size
+* using filesystem metadata, performs a bulk binary read into an in-memory buffer, 
+* and populates the bit vector in reverse order efficiently from RAM.   
 *
-* @param[in] input_file [string] Path to either the reference or sequence file 
-* @param[in] bit_array [sdsl::bit_vector] The corresponding bit array to store the file
+* @param[in] ref_file Path to the reference file 
+* @param[in] ref_bit_array Place where the reference content is stored.
 * @return void
 */
-
-void RLZ::load_reverse_file_to_bit_vector(const std::string& input_file, sdsl::bit_vector& bit_array)
+template<typename int_t>
+void RLZ_BIT<int_t>::load_reverse_reference_bit(const std::string& ref_file, sdsl::bit_vector& ref_bit_array)
 {
+    spdlog::debug("Reading reversed reference content bits");
     spdlog::stopwatch sw_convert;
-    spdlog::debug("Reading file and creating bit array");
 
-    // std::ios::ate moves cursor to end of file
-    std::ifstream file(input_file, std::ios::binary | std::ios::ate);
-    if (!file) {
-        spdlog::error("Error opening {}", input_file);
+    // Getting size of the reference
+    std::error_code ec;
+    uintmax_t ref_size = std::filesystem::file_size(ref_file, ec);
+    if (ec) {
+        spdlog::error("Error getting file size for {}: {}", ref_file, ec.message());
         std::exit(EXIT_FAILURE);
     }
 
-    // Get the file size in bytes
-    std::streamsize file_size = file.tellg();
-    // std::ios::beg moves cursor to beginning
-    file.seekg(0, std::ios::beg);
+    // Opening reference
+    std::ifstream ref(ref_file, std::ios::binary);
+    if (!ref) {
+        spdlog::error("Error opening {}", ref_file);
+        std::exit(EXIT_FAILURE);
+    }
 
-    // Resize the bit array to hold the number of bits required
-    bit_array.resize(file_size * 8);
+    // Preloading size of reference buffer
+    std::vector<char> ref_buffer(ref_size);
+    if (!ref.read(ref_buffer.data(), ref_size)) {
+        spdlog::error("Error reading data from {}", ref_file);
+        std::exit(EXIT_FAILURE);
+    }
+    ref.close();
 
-    // Read the file and populate the bit vector
-    char byte;
-    std::size_t bit_index = file_size * 8 - 1;
-    while (file.get(byte)) {
-        // Starts from most sig bit of byte becoming least significant bit and then mask other bits and store in bit array.
-        // This stores the bits of the bytes in reverse order.
+    // Resize the SDSL bit array to hold the total number of bits required
+    ref_bit_array.resize(ref_size * 8);
+
+    // Directly loading the reference into buffer
+    std::size_t bit_index = (ref_size * 8) - 1;
+    for (char byte : ref_buffer) {
         for (int i = 7; i >= 0; --i) {
-            bit_array[bit_index--] = (byte >> i) & 1;
+            ref_bit_array[bit_index--] = (byte >> i) & 1;
         }
     }
 
-    file.close();
     auto sw_convert_elapsed = sw_convert.elapsed();
     spdlog::debug("Finished creating bit array in {:.3} seconds", sw_convert_elapsed.count());
-
-    // spdlog::stopwatch sw_save;
-    // spdlog::debug("Saving bit array sdsl object to file");
-    //// Save the bit vector to a file
-    // sdsl::store_to_file(bit_array, input_file + ".sdsl");
-    // auto sw_save_elapsed = sw_save.elapsed();
-    // spdlog::debug("Finished saving in {:.3} seconds", sw_save_elapsed.count());
 }
 
 
@@ -176,28 +215,30 @@ void RLZ::load_reverse_file_to_bit_vector(const std::string& input_file, sdsl::b
 *
 * Push to parse stack since we process the string in reverse. Popping from stack gives correct order.
 *
-* @param [in] fm_index [sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>] the fm-index of the reference
+* @param [in] fm_index [rlz_fm_index_t] the fm-index of the reference
 * @param [in] fm_support [FM_Wrapper] Utility object that allows us to do search and locate queries with fm-index.
-* @param [in] occs [const std::map<char, uint64_t>&] The compressed F column of the fm-index
+* @param [in] occs [const std::vector<size_t>&] The compressed F column of the fm-index
 * @param [in] seq_file [const std::string&] the sequence file
-* @param [in] seq_parse_vec_vec [std::vector<std::vector<std::tuple<uint64_t, uint64_t>>>] empty RLZ parse vectors equal to number of threads
+* @param [in] seq_parse_vec_vec [std::vector<std::vector<std::tuple<int_t, int_t>>>] empty RLZ parse vectors equal to number of threads
 * @param [in] num_bits_to_process [size_t] the number of bits that should be processed. Useful for the OpenMP parallelization.
 * @param [in] loop_iter [size_t] the loop iteration. Useful for OpenMP and making sure we are thread-safe.
 * @param [in] num_threads [size_t] the total number of threads allocated.
+* @param [in] max_len [size_t] the maximum length of the match
 *
 * @return void
 */
-
-void RLZ::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>& fm_index,
+template<typename int_t>
+void RLZ_BIT<int_t>::parse(const rlz_fm_index_t& fm_index,
         FM_Wrapper& fm_support,
-        const std::map<char, uint64_t>& occs,
+        const std::vector<size_t>& occs,
         const std::string& seq_file,
-        std::vector<std::vector<std::tuple<uint64_t, uint64_t>>>& seq_parse_vec_vec,
+        std::vector<std::vector<std::tuple<int_t, int_t>>>& seq_parse_vec_vec,
         size_t num_char_to_process,
         size_t loop_iter,
-        size_t num_threads)
+        size_t num_threads,
+        size_t max_len)
 {
-    uint64_t pattern_len = 0;
+    size_t pattern_len = 0;
     size_t prev_left = 0;
     size_t prev_right = fm_index.bwt.size();
     size_t next_left = 0;
@@ -217,7 +258,6 @@ void RLZ::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>&
 
     // Process the file in reverse for backwards matching with FM-index.
     bool retry = false;
-    char next_char;
     char byte;
     sdsl::bit_vector seq_bit_array;
     seq_bit_array.resize(8);
@@ -254,11 +294,18 @@ void RLZ::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>&
             if (next_left == next_right){
                 pattern_len--; // -1 due to not matching the last character successfully
                 auto sa_start = std::chrono::high_resolution_clock::now();
-                uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, prev_left);
-                uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos; // 0 based involution formula of sa position to correct for the reverse string matching (will give pos in ref where pattern ends)
-                uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len; // adjust the position to where pattern starts
+                size_t sa_pos = fm_support.get_suffix_array_value(fm_index, prev_left);
+                // spdlog::trace("Reversed SA pos: {}", sa_pos);
+                size_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos; // 0 based involution formula of sa position to correct for the reverse string matching (will give pos in ref where pattern ends)
+                // spdlog::trace("Forward SA pos: {}", mirrored_sa_pos);
+                // Note: Normally would subtract pattern_len - 1 from mirrored position since mirrored position is match of len 1.
+                // However, $ is added to the end of the reversed text which means it appears at the front of the original text. 
+                // This $ is purely virtual, so it creates a 1 offset for all matches which we account for by subtracting pattern_len
+                size_t adjusted_sa_pos = mirrored_sa_pos - pattern_len;
+                // spdlog::trace("Adjusted SA pos: {}", adjusted_sa_pos);
                 auto sa_end = std::chrono::high_resolution_clock::now();
                 sa_time += sa_end - sa_start;
+                spdlog::trace("Mismatch: Putting ({},{}) at end of vector", adjusted_sa_pos, pattern_len);
                 seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
                 prev_left = 0;
                 prev_right = fm_index.bwt.size();
@@ -271,12 +318,42 @@ void RLZ::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>&
             else if (i == 7 && count == num_char_to_process || i == 7 && sfile.peek() == EOF)
             {
                 auto sa_start = std::chrono::high_resolution_clock::now();
-                uint64_t sa_pos = fm_support.get_suffix_array_value(fm_index, next_left);
-                uint64_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos;
-                uint64_t adjusted_sa_pos = mirrored_sa_pos - pattern_len;
+                size_t sa_pos = fm_support.get_suffix_array_value(fm_index, next_left);
+                // spdlog::trace("Reversed SA pos: {}", sa_pos);
+                size_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos;
+                // spdlog::trace("Forward SA pos: {}", mirrored_sa_pos);
+                // Note: Normally would subtract pattern_len - 1 from mirrored position since mirrored position is match of len 1.
+                // However, $ is added to the end of the reversed text which means it appears at the front of the original text. 
+                // This $ is purely virtual, so it creates a 1 offset for all matches which we account for by subtracting pattern_len
+                size_t adjusted_sa_pos = mirrored_sa_pos - pattern_len;
+                // spdlog::trace("Adjusted SA pos: {}", adjusted_sa_pos);
                 auto sa_end = std::chrono::high_resolution_clock::now();
                 sa_time += sa_end - sa_start;
+                spdlog::trace("END: Putting ({},{}) at end of vector", adjusted_sa_pos, pattern_len);
                 seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
+            }
+            // If a match has reached the user-defined max len
+            else if (max_len > 0 && pattern_len == max_len)
+            {
+                auto sa_start = std::chrono::high_resolution_clock::now();
+                size_t sa_pos = fm_support.get_suffix_array_value(fm_index, next_left);
+                // spdlog::trace("Reversed SA pos: {}", sa_pos);
+                size_t mirrored_sa_pos = fm_index.bwt.size() - 1 - sa_pos;
+                // spdlog::trace("Forward SA pos: {}", mirrored_sa_pos);
+                // Note: Normally would subtract pattern_len - 1 from mirrored position since mirrored position is match of len 1.
+                // However, $ is added to the end of the reversed text which means it appears at the front of the original text. 
+                // This $ is purely virtual, so it creates a 1 offset for all matches which we account for by subtracting pattern_len
+                size_t adjusted_sa_pos = mirrored_sa_pos - pattern_len;
+                // spdlog::trace("Adjusted SA pos: {}", adjusted_sa_pos);
+                auto sa_end = std::chrono::high_resolution_clock::now();
+                sa_time += sa_end - sa_start;
+                spdlog::trace("Max Len: Putting ({},{}) at end of vector", adjusted_sa_pos, pattern_len);
+                seq_parse_vec_vec[loop_iter].emplace_back(std::make_tuple(adjusted_sa_pos, pattern_len));
+                prev_left = 0;
+                prev_right = fm_index.bwt.size();
+                next_left = 0;
+                next_right = fm_index.bwt.size();
+                pattern_len = 0;
             }
             // Currently in a perfect match
             else{
@@ -289,31 +366,29 @@ void RLZ::parse(const sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32>&
 }
 
 
-/** 
-* @brief Calculates the occurances of each char in the provided text in lexicographical order
-*
-* @param [in] content [string] The string which we are deriving the occurances from
-*
+/**  
+* @brief Builds the compressed F column of BWT matrix of reference "bits"
+* @param [in] content [string] [string] The reference file "bits"
 * @return void
 */
-
-void RLZ::calculate_occs(std::string content, std::map<char, uint64_t>& occs)
+template<typename int_t>
+void RLZ_BIT<int_t>::calculate_occs(std::string& ref_content, std::vector<size_t>& occs)
 {
-    // Sort the string lexicographically
-    std::sort(content.begin(), content.end());
-    uint64_t count = 0;
-    char prev_char = '\0';
+    spdlog::debug("Constructing compressed F column of reference 'bits' ");
+    spdlog::stopwatch sw_occs;
 
-    for (size_t i = 0; i < content.size(); i++)
-    {
-        if (prev_char != content[i])
-        {
-            occs[content[i]] = count;
-        }
-
-        prev_char = content[i];
-        count++;
+    for (char c : ref_content) {
+        occs[static_cast<unsigned char>(c)]++;
     }
+    size_t running_total = 0;
+    for (int i = 0; i < 256; ++i) {
+        size_t current_frequency = occs[i];
+        occs[i] = running_total;      
+        running_total += current_frequency; 
+    }
+
+    auto sw_occs_elapsed = sw_occs.elapsed();
+    spdlog::debug("Finished building compressed F column in {:.3} seconds", sw_occs_elapsed.count());
 }
 
 
@@ -327,23 +402,26 @@ void RLZ::calculate_occs(std::string content, std::map<char, uint64_t>& occs)
 * restart the match at the last mismatch position. The parse is ultimately
 * stored in a vector in the correct order. The parse at the end is serialized to a file.
 *
-* @param [in] threads [int] The number of threads provided by the user.
 * @param [in] seq_file [const std::string&] The sequence file to compress
+* @param [in] threads [int] The number of threads provided by the user.
+* @param [in] max_len [size_t] The maximum length of the match 
 *
 * @return void
 *
 * @warning Providing multiple threads changes the output of the RLZ parse slightly. 
 * Might create two phrases at chunk boundaries if phrase spans chunk boundary. For proper RLZ parse should run with 1 thread.
-* 
-* @note Supposedly cannot create a FM-index directly from bit array.
+* * @note Supposedly cannot create a FM-index directly from bit array.
 * Have to first convert into the reference bits into their string representation and then create the FM-index.
 * Likely a bottleneck in the code as have to store a bit as a byte. [check if there is a way to build bit level FM-index]
 *
 */
-
-void RLZ::compress(int threads, const std::string& seq_file)
+template<typename int_t>
+void RLZ_BIT<int_t>::compress(const std::string& seq_file, int threads, size_t max_len)
 {
-    sdsl::csa_wt<sdsl::wt_huff<sdsl::rrr_vector<15>>, 16, 32> fm_index;
+
+    spdlog::stopwatch sw_compress;
+
+    rlz_fm_index_t fm_index;
     std::string binary_reference_text;
 
     // Convert the reference bit array into its string representation
@@ -352,15 +430,20 @@ void RLZ::compress(int threads, const std::string& seq_file)
     }
 
     // Creates the FM-index
+    spdlog::debug("Building FM-index of reversed reference 'bits'");
+    spdlog::stopwatch sw_fm_index;
     construct_im(fm_index, binary_reference_text, 1);
-    spdlog::debug("Finished building the FM-index");
-    std::map<char, uint64_t> occs;
+    assert(binary_reference_text.size() + 1 == fm_index.bwt.size()); // SDSL should add the sentinel to the end
+    auto sw_fm_index_elapsed = sw_fm_index.elapsed();
+    spdlog::debug("Finished building FM-index in {:.3} seconds", sw_fm_index_elapsed.count());
+
+    // Get the number of occurances of each bit in lexicographical order
+    std::vector<size_t> occs(256, 0);
     calculate_occs(binary_reference_text, occs);
-    spdlog::debug("Finished building compressed F column");
 
     FM_Wrapper fm_support;
     
-    std::vector<std::vector<std::tuple<uint64_t, uint64_t>>> seq_parse_vec_vec(threads);
+    std::vector<std::vector<std::tuple<int_t, int_t>>> seq_parse_vec_vec(threads);
 
     std::ifstream sfile(seq_file, std::ios::binary | std::ios::ate); // Opens the file in binary mode and moves indicator to end
     if (!sfile) {
@@ -382,19 +465,19 @@ void RLZ::compress(int threads, const std::string& seq_file)
     #pragma omp parallel for schedule(static)
     for (size_t i = 0; i < threads; i++)
     {
-        parse(fm_index, fm_support, occs, seq_file, seq_parse_vec_vec, num_char_to_process, i, threads);
+        parse(fm_index, fm_support, occs, seq_file, seq_parse_vec_vec, num_char_to_process, i, threads, max_len);
     }
 
-    spdlog::debug("Total FM-index time (s): {:.6f}", std::chrono::duration<double>(backward_match_time).count());
-    spdlog::debug("Total SA time (s): {:.6f}", std::chrono::duration<double>(sa_time).count());
+    spdlog::debug("Total time spent processing occurrences (s): {:.6f}", std::chrono::duration<double>(backward_match_time).count());
+    spdlog::debug("Total time spent processing locations (s): {:.6f}", std::chrono::duration<double>(sa_time).count());
 
     // Store tuples of (pos,len) in correct order in vector
     size_t bits_stored = 0;
-    std::vector<std::tuple<uint64_t, uint64_t>> seq_parse;
+    std::vector<std::tuple<int_t, int_t>> seq_parse;
     // Can process the parse vectors sequentially since the first vector contains the parse of the start of the non-reversed sequence.
     for (int i = 0; i < threads; i++)
     {
-        for (int j = 0; j < seq_parse_vec_vec[i].size(); j++)
+        for (size_t j = 0; j < seq_parse_vec_vec[i].size(); j++)
         {
             bits_stored += std::get<1>(seq_parse_vec_vec[i][j]);
             seq_parse.emplace_back(seq_parse_vec_vec[i][j]);
@@ -402,17 +485,14 @@ void RLZ::compress(int threads, const std::string& seq_file)
         }
     }
 
-    spdlog::debug("The sequence was encoded in {} bits", seq_size * 8);
+    spdlog::debug("The sequence file contained {} bits", seq_size * 8);
     spdlog::debug("The rlz parse encodes for {} bits", bits_stored);
 
-    auto serialize_start = std::chrono::high_resolution_clock::now();
+    // Serialize the RLZ parse
     serialize(seq_parse, seq_file);
-    auto serialize_end = std::chrono::high_resolution_clock::now();
-    serialize_time += serialize_end - serialize_start;
-    spdlog::debug("Total serialize time (s): {:.6f}", std::chrono::duration<double>(serialize_time).count());
 
-    // Comment (Testing only)
-    // print_serialize(seq_parse, seq_file);
+    auto sw_compress_elapsed = sw_compress.elapsed();
+    spdlog::info("Compression finished in {:.3} seconds", sw_compress_elapsed.count());
 }
 
 /**
@@ -422,29 +502,34 @@ void RLZ::compress(int threads, const std::string& seq_file)
 * We serialize the parse vector into binary file called seq_file_name.rlz
 *
 * File content of the .rlz file
-* (uint64_t byte size num of pair) (uint64_t byte size pos) (uint64_t byte size len) (uint64_t byte size pos) (uint64_t byte size len) ...
-*  
-* @param[in] seq_parse [std::vector<std::tuple<uint64_t, uint64_t>>] The parse of the seq <(binary ref pos,len),(binary ref pos,len),(binary ref pos,len)... >
+* (uint64_t byte size num of pair) (int_t byte size pos) (int_t byte size len) (int_t byte size pos) (int_t byte size len) ...
+* @param[in] seq_parse [std::vector<std::tuple<int_t, int_t>>] The parse of the seq <(binary ref pos,len),(binary ref pos,len),(binary ref pos,len)... >
 * @param[in] seq_file [std::string] the sequence file name
 *
 * @return void
 */
-
-void RLZ::serialize(const std::vector<std::tuple<uint64_t, uint64_t>>& seq_parse, const std::string& seq_file)
+template<typename int_t>
+void RLZ_BIT<int_t>::serialize(const std::vector<std::tuple<int_t, int_t>>& seq_parse, const std::string& seq_file)
 {
+    spdlog::debug("Serializing RLZ parse");
+    spdlog::stopwatch sw_serialize;
+
     std::ofstream ofs(seq_file + ".rlz", std::ios::binary);
     if (!ofs) {
         spdlog::error("Error opening {}", seq_file + ".rlz");
         std::exit(EXIT_FAILURE);
     }
-    size_t size = seq_parse.size();
-    ofs.write(reinterpret_cast<const char*>(&size), sizeof(size));
+    uint64_t size = seq_parse.size();
+    ofs.write(reinterpret_cast<const char*>(&size), sizeof(uint64_t));
     for (size_t i = 0; i < size; i++)
     {
-        ofs.write(reinterpret_cast<const char*>(&std::get<0>(seq_parse[i])), sizeof(uint64_t));
-        ofs.write(reinterpret_cast<const char*>(&std::get<1>(seq_parse[i])), sizeof(uint64_t));
+        ofs.write(reinterpret_cast<const char*>(&std::get<0>(seq_parse[i])), sizeof(int_t));
+        ofs.write(reinterpret_cast<const char*>(&std::get<1>(seq_parse[i])), sizeof(int_t));
     }
     ofs.close();
+
+    auto sw_serialize_elapsed = sw_serialize.elapsed();
+    spdlog::debug("Serializing finished in {:.6f} seconds", sw_serialize_elapsed.count());
 }
 
 
@@ -458,25 +543,28 @@ void RLZ::serialize(const std::vector<std::tuple<uint64_t, uint64_t>>& seq_parse
 *
 * @return Return the vector.
 */
-
-std::vector<std::tuple<uint64_t, uint64_t>> RLZ::deserialize(const std::string& parse_file)
+template<typename int_t>
+std::vector<std::tuple<int_t, int_t>> RLZ_BIT<int_t>::deserialize(const std::string& parse_file)
 {
+    spdlog::debug("Deserializing RLZ parse");
+    spdlog::stopwatch sw_deserialize;
+
     std::ifstream ifs(parse_file, std::ios::binary);
     if (!ifs) {
         spdlog::error("Error opening {}", parse_file);
         std::exit(EXIT_FAILURE);
     }
     uint64_t size;
-    std::vector<std::tuple<uint64_t, uint64_t>> seq_parse;
+    std::vector<std::tuple<int_t, int_t>> seq_parse;
 
     ifs.read(reinterpret_cast<char*>(&size), sizeof(uint64_t));
     seq_parse.reserve(size);
-    std::tuple<uint64_t, uint64_t> elem;
-    uint64_t val;
+    std::tuple<int_t, int_t> elem;
+    int_t val;
 
     for (size_t i = 0; i < 2 * size; i++)
     {
-        ifs.read(reinterpret_cast<char*>(&val), sizeof(uint64_t));
+        ifs.read(reinterpret_cast<char*>(&val), sizeof(int_t));
         if (i % 2 == 0){
             std::get<0>(elem) = val;
         }
@@ -486,6 +574,9 @@ std::vector<std::tuple<uint64_t, uint64_t>> RLZ::deserialize(const std::string& 
         }
     }
     ifs.close();
+
+    auto sw_deserialize_elapsed = sw_deserialize.elapsed();
+    spdlog::debug("Deserializing finished in {:.6f} seconds", sw_deserialize_elapsed.count());
 
     return seq_parse;
 }
@@ -501,17 +592,19 @@ std::vector<std::tuple<uint64_t, uint64_t>> RLZ::deserialize(const std::string& 
 *
 * @warning might have to change int to long long int depending on size
 */
-
-void RLZ::decompress(const std::string& parse_file)
+template<typename int_t>
+void RLZ_BIT<int_t>::decompress(const std::string& parse_file)
 {
-    std::vector<std::tuple<uint64_t, uint64_t>> seq_parse = deserialize(parse_file);
+    spdlog::stopwatch sw_decompress;
+
+    std::vector<std::tuple<int_t, int_t>> seq_parse = deserialize(parse_file);
     
     size_t bit_size = 0;
     for (const auto& [pos, len] : seq_parse){
         bit_size += len;
     }
 
-    spdlog::debug("The compessed sequence file had {} bits", bit_size);
+    spdlog::debug("The compressed sequence file encodes for {} bits", bit_size);
 
     // Resize the array to be equal to the number of bits to be stored
     sdsl::bit_vector seq_bit_array;
@@ -528,9 +621,6 @@ void RLZ::decompress(const std::string& parse_file)
         }
         prev_pos = curr_pos;
     }
-
-    // Comment (Testing only)
-    // bits_to_str(seq_bit_array, ".decompress.bits");
 
     // Remove extension from parse file
     size_t last_dot = parse_file.find_last_of(".");
@@ -563,6 +653,9 @@ void RLZ::decompress(const std::string& parse_file)
 
     output_file << uncompressed_seq;
     output_file.close();
+
+    auto sw_decompress_elapsed = sw_decompress.elapsed();
+    spdlog::info("Decompression finished in {:.3} seconds", sw_decompress_elapsed.count());
 }
 
 
@@ -572,14 +665,13 @@ void RLZ::decompress(const std::string& parse_file)
 * Prints out debug info about how many 0 and 1s are in the bit array.
 * Writes the string representation of the bits to a file.
 * Testing purposes only.
-* 
-* @param [in] bit_array [sdsl::bit_vector] the bit array of interest
+* * @param [in] bit_array [sdsl::bit_vector] the bit array of interest
 * @param [in] ext [std::string] the extension of the file
 *
 *
 */
-
-void RLZ::bits_to_str(sdsl::bit_vector bit_array, std::string ext)
+template<typename int_t>
+void RLZ_BIT<int_t>::bits_to_str(sdsl::bit_vector bit_array, std::string ext)
 {
     std::string bitstr;
     for (size_t i = 0; i < bit_array.size(); ++i) {
@@ -607,14 +699,13 @@ void RLZ::bits_to_str(sdsl::bit_vector bit_array, std::string ext)
 *
 * The sequence parse contains tuples (binary ref pos, size) that can reconstruct the sequence file given the reference.
 * We write the non-binary serialization to a file. Testing purposes only.
-* 
-* @param[in] seq_parse [std::vector<std::tuple<uint64_t, uint64_t>>] The parse of the seq <(binary ref pos,len),(binary ref pos,len),(binary ref pos,len)... >
+* * @param[in] seq_parse [std::vector<std::tuple<int_t, int_t>>] The parse of the seq <(binary ref pos,len),(binary ref pos,len),(binary ref pos,len)... >
 * @param[in] seq_file [const std::string&] The sequence filename
 *
 * @return void
 */
-
-void RLZ::print_serialize(const std::vector<std::tuple<uint64_t, uint64_t>>& seq_parse, const std::string& seq_file)
+template<typename int_t>
+void RLZ_BIT<int_t>::print_serialize(const std::vector<std::tuple<int_t, int_t>>& seq_parse, const std::string& seq_file)
 {
     std::ofstream ofs(seq_file + ".readable.rlz");
     if (!ofs) {
@@ -628,3 +719,5 @@ void RLZ::print_serialize(const std::vector<std::tuple<uint64_t, uint64_t>>& seq
 
     ofs.close();
 }
+
+#endif  // RLZ_ALGO_BIT_H
