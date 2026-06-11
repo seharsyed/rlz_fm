@@ -20,7 +20,9 @@ However, the parse might be larger than the character-level parse due to encodin
 
 The software performs pattern matching by streaming the sequence file char by char (or bit by bit) against the FM-index of the reversed reference. This approach enables the software to simulate forward matching of the sequence file against the reference. The correct reference positions of the matches are obtained by applying an involution to the suffix array positions retrieved from the FM-index (which is built on the reversed reference text), a constant-time operation. 
 
-## Algorithm Workflow
+Additionally, an executable has been added that supports sorting RLZ sequences directly in their compressed form. It takes an RLZ parse as input and produces the suffix array of the original sequence. Note that the suffix array is 0-based and does not include a terminal sentinel symbol, unlike conventional constructions.   
+
+## RLZ Algorithm Workflow
 
 To compress the target sequence file relative to a reference file, the software follows these steps:
 
@@ -46,7 +48,7 @@ Common steps (for all encoding types):
 4. Write all (pos, len) pairs sequentially to a file. This constitutes the RLZ parse.
 
 > [!NOTE]
-> The RLZ parse is in reference to the reference file.
+> The RLZ parse is computed with respect to the reference file.
 
 ## Prerequisites
 
@@ -71,9 +73,15 @@ make -j
 
 ### Running the project
 
-After building the project, an executable named rlz will be created in the build directory. Run it with:
+After building the project, an executable named `rlz` will be created in the build directory. Run it with:
 ```
 ./rlz compress -r [reference file] -s [file to compress] [options] 
+```
+
+Additionally, an executable named `sort` will be created in the build directory. Run it with:
+
+```
+./sort rlz -r [reference file] -p [RLZ parse file] [options]
 ```
 
 ### Default Compression Example
@@ -131,10 +139,60 @@ diff ../data/english/english_seq.txt ../data/english/english_seq.txt.out
 
 There should be no output from this command if compressed and decompressed correctly. 
 
-> [!NOTE]
-> To get more information from the tool. Run the command with --verbose flag.
+### Sorting RLZ Parse Example
 
-### License
+In this section, we show how to use the sort exectuable. We assume that you have already run the commands from the Default Compression example.
+
+1. To sort the RLZ parse file, run the following command from the build directory
+
+```
+./sort rlz -r ../data/dna/dna_ref.txt -p ../data/dna/dna_seq.txt.rlz --naive
+```
+
+This command produces a file named `dna_seq.txt.rlz.sa` in the data/dna directory. The file contains the suffix array of the original text, computed by decomposing complete RLZ factors into their constituent complete and incomplete factors before sorting. Additional sorting options are available and can be viewed by passing the `-h` flag.
+
+2. To sort the original sequence file, run the following command
+
+```
+./sort text -s ../data/dna/dna_seq.txt 
+```
+
+This command should produce a file called `dna_seq.txt.sa` in the data/dna directory. This contains the suffix array of the orginal text. This was found by directly sorting the sequence file itself.
+
+3. Check if the files are the same
+
+```
+diff ../data/dna/dna_seq.txt.rlz.sa ../data/dna/dna_seq.txt.sa 
+```
+
+There should be no output from this command if the sorting was done correctly.
+
+> [!NOTE]
+> The suffix array is 0-based and does not assume the presence of a terminal sentinel symbol, unlike most constructions.
+
+The previous sort command expands the RLZ representation into complete and incomplete factors to construct the full suffix array. Alternatively, it can construct a partial suffix array containing only suffixes represented by complete RLZ factors.
+
+4. To sort only the complete RLZ factors, run the following command
+
+```
+./sort rlz -r ../data/dna/dna_ref.txt -p ../data/dna/dna_seq.txt.rlz --factors-only
+```
+
+This will overwrite the suffix array produced by the last sort command. 
+
+5. To verify that the partial suffix array is a subset of the full suffix array, run the following command
+
+```
+awk 'NR==FNR{a[++n]=$1; next} $1==a[i+1]{i++} END{exit (i<n)}' ../data/dna/dna_seq.txt.rlz.sa ../data/dna/dna_seq.txt.sa  && echo "Ordered subset" || echo "Not an ordered subset"
+```
+
+The above command should output: "Ordered Subset"
+
+
+> [!NOTE]
+> To get more information from the tools. Run the commands with the -v option.
+
+## License
 
 This project is licensed under the GNU License - see the [LICENSE](https://github.com/rvarki/rlz/blob/main/LICENSE) file for details
 

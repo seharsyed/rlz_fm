@@ -96,7 +96,7 @@ int main(int argc, char **argv)
     int threads = 1;
     size_t max_len = 0; // 0 means not set
     bool rlz_repair = false;
-    std::string version = "Version: 1.0.0";
+    std::string version = "Version: 1.1.0";
     
     // Compress Subcommand
     auto* compress_cmd = app.add_subcommand("compress", "Compress a sequence file using RLZ");

@@ -135,10 +135,19 @@ add_library(fm_wrapper ${PROJECT_SRC_DIR}/fm_wrapper.cpp)
 target_include_directories(fm_wrapper PUBLIC ${SDSL_SRC} ${DIVSUFSORT_SRC} ${DIVSUFSORT64_SRC} ${PROJECT_INCLUDE_DIR})
 target_link_libraries(fm_wrapper PUBLIC ${SDSL_LIB} ${DIVSUFSORT_LIB} ${DIVSUFSORT64_LIB})
 
-add_executable(rlz rlz.cpp)
+add_executable(rlz ${PROJECT_SRC_DIR}/rlz.cpp)
 target_include_directories(rlz PUBLIC ${PROJECT_INCLUDE_DIR} ${SDSL_SRC} ${THIRDPARTY_INCLUDE_DIR} ${THIRDPARTY_INCLUDE_DIR}/CLI)
 target_link_libraries(rlz PUBLIC ${SDSL_LIB} fm_wrapper)
 
+add_executable(sort ${PROJECT_SRC_DIR}/sort.cpp ${PROJECT_SRC_DIR}/sort_algo_text.cpp ${PROJECT_SRC_DIR}/benchmark_logger.cpp)
+target_include_directories(sort PUBLIC ${PROJECT_INCLUDE_DIR} ${SDSL_SRC} ${THIRDPARTY_INCLUDE_DIR} ${THIRDPARTY_INCLUDE_DIR}/CLI)
+target_link_libraries(sort PUBLIC ${SDSL_LIB} ${DIVSUFSORT_LIB} ${DIVSUFSORT64_LIB})
+
+add_executable(stats ${PROJECT_SRC_DIR}/stats.cpp)
+target_include_directories(stats PUBLIC ${PROJECT_INCLUDE_DIR} ${THIRDPARTY_INCLUDE_DIR} ${THIRDPARTY_INCLUDE_DIR}/CLI)
+
 install(TARGETS fm_wrapper TYPE LIBRARY)
 install(TARGETS rlz TYPE RUNTIME)
+install(TARGETS sort TYPE RUNTIME)
+install(TARGETS stats TYPE RUNTIME)
 
