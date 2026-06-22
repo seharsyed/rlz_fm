@@ -28,17 +28,15 @@ void FM_Wrapper_Cached::configure(std::size_t fm_size,
     fm_size_ = fm_size;
     bucket_divisor_ = bucket_divisor;
 
-    // IMPORTANT:
-    // Match old SA/binary-search RLZ cache semantics.
+    // IMPORTANT
     // bucket_divisor means bucket size, not number of buckets.
     bucket_size_ = bucket_divisor_;
 
     // Width gate:
-    // width <= 1 means singleton interval. Old RLZ cache bypassed this
-    // singleton/direct-comparison tail, so FM cache must not cache it either.
+    // width <= 1 means singleton interval. 
     min_cache_width_ = min_cache_width;
 
-    // Keep +1 slack bucket, same robust style as old cache.
+    // Keep +1 slack bucket
     std::size_t count = (fm_size_ / bucket_size_) + 1;
     buckets_.assign(count, Bucket{});
 
@@ -219,8 +217,7 @@ std::tuple<std::size_t, std::size_t> FM_Wrapper_Cached::backward_match(
 
     const std::size_t width = old_right - old_left;
 
-    // Faithful old-cache analogue:
-    // old RLZ did not cache the singleton/direct-comparison tail.
+    
     // For FM, singleton/narrow intervals are computed directly.
     if (width <= min_cache_width_) {
         return compute_fm_transition(
@@ -246,7 +243,7 @@ std::tuple<std::size_t, std::size_t> FM_Wrapper_Cached::backward_match(
     const std::size_t new_left = std::get<0>(result);
     const std::size_t new_right = std::get<1>(result);
 
-    // Match old RLZ cache behaviour: do not cache failed/empty refinements.
+    // Skip cache failed/empty refinements.
     if (new_left == new_right) {
         return result;
     }
