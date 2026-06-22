@@ -1,0 +1,208 @@
+diff -ruN a/include/fm_wrapper_cached.h b/include/fm_wrapper_cached.h
+--- a/include/fm_wrapper_cached.h
++++ b/include/fm_wrapper_cached.h
+@@ -14,6 +14,9 @@
+     std::size_t entries = 0;
+     std::size_t bucket_size = 0;
+     std::size_t bucket_count = 0;
++    std::size_t min_cache_width = 0;
++    std::size_t max_bucket_index = 0;
++    std::size_t max_bucket_entries = 0;
+ };
+ 
+ class FM_Wrapper_Cached
+diff -ruN a/include/rlz_list_runner.h b/include/rlz_list_runner.h
+--- a/include/rlz_list_runner.h
++++ b/include/rlz_list_runner.h
+@@ -13,6 +13,7 @@
+     std::string csv_file;
+     std::string mode = "baseline";
+     std::size_t bucket_divisor = 32;
++    std::size_t min_cache_width = 1;
+     std::size_t max_len = 0;
+ };
+ 
+@@ -30,6 +31,9 @@
+     std::size_t cache_entries = 0;
+     std::size_t bucket_size = 0;
+     std::size_t bucket_count = 0;
++    std::size_t min_cache_width = 0;
++    std::size_t max_bucket_index = 0;
++    std::size_t max_bucket_entries = 0;
+ };
+ 
+ std::vector<std::string> read_rlz_input_list(const std::string& input_list_file);
+diff -ruN a/src/fm_wrapper_cached.cpp b/src/fm_wrapper_cached.cpp
+--- a/src/fm_wrapper_cached.cpp
++++ b/src/fm_wrapper_cached.cpp
+@@ -283,12 +283,25 @@
+ 
+ FM_Cache_Info FM_Wrapper_Cached::cache_info() const
+ {
++    std::size_t max_bucket_index = 0;
++    std::size_t max_bucket_entries = 0;
++
++    for (std::size_t i = 0; i < table_.size(); ++i) {
++        if (table_[i].used > max_bucket_entries) {
++            max_bucket_entries = table_[i].used;
++            max_bucket_index = i;
++        }
++    }
++
+     return FM_Cache_Info{
+         hits_,
+         misses_,
+         entries_,
+         bucket_divisor_,
+-        table_.size()
++        table_.size(),
++        min_cache_width_,
++        max_bucket_index,
++        max_bucket_entries
+     };
+ }
+ 
+diff -ruN a/src/rlz.cpp b/src/rlz.cpp
+--- a/src/rlz.cpp
++++ b/src/rlz.cpp
+@@ -90,6 +90,7 @@
+                                const std::string& input_list_file,
+                                const std::string& mode,
+                                std::size_t bucket_divisor,
++                               std::size_t min_cache_width,
+                                const std::string& csv_file,
+                                std::size_t max_len)
+ {
+@@ -98,6 +99,7 @@
+     config.input_list_file = input_list_file;
+     config.mode = mode;
+     config.bucket_divisor = bucket_divisor;
++    config.min_cache_width = min_cache_width;
+     config.csv_file = csv_file;
+     config.max_len = max_len;
+ 
+@@ -138,6 +140,7 @@
+     std::string mode = "baseline";
+     std::string csv_file;
+     std::size_t bucket_divisor = 32;
++    std::size_t min_cache_width = 1;
+     
+     // Compress Subcommand
+     auto* compress_cmd = app.add_subcommand("compress", "Compress a sequence file using RLZ");
+@@ -158,6 +161,10 @@
+                          "Bucket divisor for cached FM-index mode")
+     ->default_val(32);
+ 
++    compress_cmd->add_option("--min-cache-width", min_cache_width,
++                         "Do not cache FM intervals with width less than or equal to this value")
++    ->default_val(1);
++
+     compress_cmd->add_option("--csv", csv_file,
+                          "CSV output file for --input-list experiment mode");
+     
+@@ -213,7 +220,8 @@
+         if (mode == "baseline") {
+             csv_file = "baseline_once.csv";
+         } else {
+-            csv_file = "cached_bucket_" + std::to_string(bucket_divisor) + ".csv";
++            csv_file = "cached_bucket_" + std::to_string(bucket_divisor) +
++                       "_width_" + std::to_string(min_cache_width) + ".csv";
+         }
+     }
+ 
+@@ -221,6 +229,8 @@
+     spdlog::info("Reference file: {}", ref_file);
+     spdlog::info("Input list: {}", input_list_file);
+     spdlog::info("Mode: {}", mode);
++    spdlog::info("Bucket divisor: {}", bucket_divisor);
++    spdlog::info("Minimum cache width: {}", min_cache_width);
+     spdlog::info("CSV: {}", csv_file);
+ 
+     std::uintmax_t ref_size = std::filesystem::file_size(ref_file);
+@@ -228,7 +238,7 @@
+     if (rlz_repair) {
+         if (ref_size < std::numeric_limits<int>::max()) {
+             run_char_list_compression<int>(
+-                ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
++                ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
+         } else {
+             spdlog::error("Reference too large for int entries.");
+             return 1;
+@@ -238,16 +248,16 @@
+ 
+     if (ref_size <= UINT8_MAX) {
+         run_char_list_compression<std::uint8_t>(
+-            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
++            ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
+     } else if (ref_size <= UINT16_MAX) {
+         run_char_list_compression<std::uint16_t>(
+-            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
++            ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
+     } else if (ref_size <= UINT32_MAX) {
+         run_char_list_compression<std::uint32_t>(
+-            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
++            ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
+     } else {
+         run_char_list_compression<std::uint64_t>(
+-            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
++            ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
+     }
+ 
+     return 0;
+diff -ruN a/src/rlz_list_runner.cpp b/src/rlz_list_runner.cpp
+--- a/src/rlz_list_runner.cpp
++++ b/src/rlz_list_runner.cpp
+@@ -83,8 +83,8 @@
+ void write_csv_header(std::ofstream& csv)
+ {
+     csv << "filename,input_size,parse_size,factor_count,time_sec,mode,"
+-        << "bucket_divisor,cache_hits,cache_misses,cache_entries,"
+-        << "bucket_size,bucket_count\n";
++        << "bucket_divisor,min_cache_width,cache_hits,cache_misses,cache_entries,"
++        << "bucket_size,bucket_count,max_bucket_index,max_bucket_entries\n";
+ }
+ 
+ void write_csv_row(std::ofstream& csv, const RLZListResult& r)
+@@ -96,11 +96,14 @@
+         << r.time_sec << ','
+         << r.mode << ','
+         << r.bucket_divisor << ','
++        << r.min_cache_width << ','
+         << r.cache_hits << ','
+         << r.cache_misses << ','
+         << r.cache_entries << ','
+         << r.bucket_size << ','
+-        << r.bucket_count << '\n';
++        << r.bucket_count << ','
++        << r.max_bucket_index << ','
++        << r.max_bucket_entries << '\n';
+ }
+ 
+ void load_reverse_reference(const std::string& ref_file, std::string& ref_content)
+@@ -327,7 +330,10 @@
+     FM_Wrapper_Cached cached_wrapper;
+ 
+     if (config.mode == "cached") {
+-        cached_wrapper.configure(fm_index.bwt.size(), config.bucket_divisor);
++        cached_wrapper.configure(
++            fm_index.bwt.size(),
++            config.bucket_divisor,
++            config.min_cache_width);
+     }
+ 
+     std::ofstream csv;
+@@ -398,11 +404,14 @@
+             FM_Cache_Info after = cached_wrapper.cache_info();
+ 
+             row.bucket_divisor = config.bucket_divisor;
++            row.min_cache_width = after.min_cache_width;
+             row.cache_hits = after.hits - hits_before;
+             row.cache_misses = after.misses - misses_before;
+             row.cache_entries = after.entries;
+             row.bucket_size = after.bucket_size;
+             row.bucket_count = after.bucket_count;
++            row.max_bucket_index = after.max_bucket_index;
++            row.max_bucket_entries = after.max_bucket_entries;
+         }
+ 
+         if (csv) {

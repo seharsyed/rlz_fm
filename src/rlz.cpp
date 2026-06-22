@@ -90,6 +90,7 @@ void run_char_list_compression(const std::string& ref_file,
                                const std::string& input_list_file,
                                const std::string& mode,
                                std::size_t bucket_divisor,
+                               std::size_t min_cache_width,
                                const std::string& csv_file,
                                std::size_t max_len)
 {
@@ -98,6 +99,7 @@ void run_char_list_compression(const std::string& ref_file,
     config.input_list_file = input_list_file;
     config.mode = mode;
     config.bucket_divisor = bucket_divisor;
+    config.min_cache_width = min_cache_width;
     config.csv_file = csv_file;
     config.max_len = max_len;
 
@@ -138,6 +140,7 @@ int main(int argc, char **argv)
     std::string mode = "baseline";
     std::string csv_file;
     std::size_t bucket_divisor = 32;
+    std::size_t min_cache_width = 1;
     
     // Compress Subcommand
     auto* compress_cmd = app.add_subcommand("compress", "Compress a sequence file using RLZ");
@@ -157,6 +160,10 @@ int main(int argc, char **argv)
     compress_cmd->add_option("--bucket-divisor", bucket_divisor,
                          "Bucket divisor for cached FM-index mode")
     ->default_val(32);
+
+    compress_cmd->add_option("--min-cache-width", min_cache_width,
+                         "Do not cache FM intervals with width less than or equal to this value")
+    ->default_val(1);
 
     compress_cmd->add_option("--csv", csv_file,
                          "CSV output file for --input-list experiment mode");
@@ -213,7 +220,8 @@ int main(int argc, char **argv)
         if (mode == "baseline") {
             csv_file = "baseline_once.csv";
         } else {
-            csv_file = "cached_bucket_" + std::to_string(bucket_divisor) + ".csv";
+            csv_file = "cached_bucket_" + std::to_string(bucket_divisor) +
+                       "_width_" + std::to_string(min_cache_width) + ".csv";
         }
     }
 
@@ -221,6 +229,8 @@ int main(int argc, char **argv)
     spdlog::info("Reference file: {}", ref_file);
     spdlog::info("Input list: {}", input_list_file);
     spdlog::info("Mode: {}", mode);
+    spdlog::info("Bucket divisor: {}", bucket_divisor);
+    spdlog::info("Minimum cache width: {}", min_cache_width);
     spdlog::info("CSV: {}", csv_file);
 
     std::uintmax_t ref_size = std::filesystem::file_size(ref_file);
@@ -228,7 +238,7 @@ int main(int argc, char **argv)
     if (rlz_repair) {
         if (ref_size < std::numeric_limits<int>::max()) {
             run_char_list_compression<int>(
-                ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+                ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
         } else {
             spdlog::error("Reference too large for int entries.");
             return 1;
@@ -238,16 +248,16 @@ int main(int argc, char **argv)
 
     if (ref_size <= UINT8_MAX) {
         run_char_list_compression<std::uint8_t>(
-            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+            ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
     } else if (ref_size <= UINT16_MAX) {
         run_char_list_compression<std::uint16_t>(
-            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+            ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
     } else if (ref_size <= UINT32_MAX) {
         run_char_list_compression<std::uint32_t>(
-            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+            ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
     } else {
         run_char_list_compression<std::uint64_t>(
-            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+            ref_file, input_list_file, mode, bucket_divisor, min_cache_width, csv_file, max_len);
     }
 
     return 0;

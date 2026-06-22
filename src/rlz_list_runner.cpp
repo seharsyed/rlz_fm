@@ -83,8 +83,8 @@ std::string csv_escape(const std::string& value)
 void write_csv_header(std::ofstream& csv)
 {
     csv << "filename,input_size,parse_size,factor_count,time_sec,mode,"
-        << "bucket_divisor,cache_hits,cache_misses,cache_entries,"
-        << "bucket_size,bucket_count\n";
+        << "bucket_divisor,min_cache_width,cache_hits,cache_misses,cache_entries,"
+        << "bucket_size,bucket_count,max_bucket_index,max_bucket_entries\n";
 }
 
 void write_csv_row(std::ofstream& csv, const RLZListResult& r)
@@ -96,11 +96,14 @@ void write_csv_row(std::ofstream& csv, const RLZListResult& r)
         << r.time_sec << ','
         << r.mode << ','
         << r.bucket_divisor << ','
+        << r.min_cache_width << ','
         << r.cache_hits << ','
         << r.cache_misses << ','
         << r.cache_entries << ','
         << r.bucket_size << ','
-        << r.bucket_count << '\n';
+        << r.bucket_count << ','
+        << r.max_bucket_index << ','
+        << r.max_bucket_entries << '\n';
 }
 
 void load_reverse_reference(const std::string& ref_file, std::string& ref_content)
@@ -327,7 +330,10 @@ std::vector<RLZListResult> run_rlz_list(const RLZListConfig& config)
     FM_Wrapper_Cached cached_wrapper;
 
     if (config.mode == "cached") {
-        cached_wrapper.configure(fm_index.bwt.size(), config.bucket_divisor);
+        cached_wrapper.configure(
+            fm_index.bwt.size(),
+            config.bucket_divisor,
+            config.min_cache_width);
     }
 
     std::ofstream csv;
@@ -398,11 +404,14 @@ std::vector<RLZListResult> run_rlz_list(const RLZListConfig& config)
             FM_Cache_Info after = cached_wrapper.cache_info();
 
             row.bucket_divisor = config.bucket_divisor;
+            row.min_cache_width = after.min_cache_width;
             row.cache_hits = after.hits - hits_before;
             row.cache_misses = after.misses - misses_before;
             row.cache_entries = after.entries;
             row.bucket_size = after.bucket_size;
             row.bucket_count = after.bucket_count;
+            row.max_bucket_index = after.max_bucket_index;
+            row.max_bucket_entries = after.max_bucket_entries;
         }
 
         if (csv) {

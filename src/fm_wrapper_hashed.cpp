@@ -38,7 +38,8 @@ void FM_Wrapper_Cached::configure(std::size_t fm_size,
 
 void FM_Wrapper_Cached::rebuild_table()
 {
-    const std::size_t buckets = (fm_size_ / bucket_divisor_) + 1;
+    const std::size_t buckets =
+        (fm_size_ / bucket_divisor_) + 1;
 
     table_.clear();
     table_.resize(buckets);
@@ -70,25 +71,77 @@ FM_Wrapper_Cached::LookupKey FM_Wrapper_Cached::make_key(
     return LookupKey{old_left % bucket_divisor_, old_right, symbol};
 }
 
+std::size_t FM_Wrapper_Cached::key_position(const LookupKey& key)
+{
+    std::size_t h = key.left_remainder;
+
+    h ^= key.old_right + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+    h ^= static_cast<std::size_t>(key.symbol) +
+         0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+
+    return h;
+}
+
+void FM_Wrapper_Cached::initialise_bucket(Bucket& bucket)
+{
+    if (bucket.entries.empty()) {
+        bucket.entries.resize(8);
+        bucket.used = 0;
+    }
+}
+
+void FM_Wrapper_Cached::rebuild_bucket(Bucket& bucket)
+{
+    std::vector<Entry> old_entries;
+    old_entries.swap(bucket.entries);
+
+    bucket.entries.clear();
+    bucket.entries.resize(old_entries.empty() ? 8 : old_entries.size() * 2);
+    bucket.used = 0;
+
+    for (const Entry& entry : old_entries) {
+        if (!entry.used) {
+            continue;
+        }
+
+        const std::size_t mask = bucket.entries.size() - 1;
+        std::size_t pos = key_position(entry.key) & mask;
+
+        while (bucket.entries[pos].used) {
+            pos = (pos + 1) & mask;
+        }
+
+        bucket.entries[pos] = entry;
+        ++bucket.used;
+    }
+}
+
 bool FM_Wrapper_Cached::lookup(std::size_t old_left,
                                std::size_t old_right,
                                unsigned char symbol,
                                Interval& cached_interval)
 {
     const std::size_t b = bucket_index(old_left);
+    Bucket& bucket = table_[b];
 
-    if (b >= table_.size()) {
-        throw std::runtime_error("FM_Wrapper_Cached: bucket index out of range");
+    if (bucket.entries.empty()) {
+        ++misses_;
+        return false;
     }
 
     const LookupKey key = make_key(old_left, old_right, symbol);
 
-    for (const Entry& entry : table_[b]) {
-        if (entry.first == key) {
-            cached_interval = entry.second;
+    const std::size_t mask = bucket.entries.size() - 1;
+    std::size_t pos = key_position(key) & mask;
+
+    while (bucket.entries[pos].used) {
+        if (bucket.entries[pos].key == key) {
+            cached_interval = bucket.entries[pos].interval;
             ++hits_;
             return true;
         }
+
+        pos = (pos + 1) & mask;
     }
 
     ++misses_;
@@ -102,16 +155,33 @@ void FM_Wrapper_Cached::insert(std::size_t old_left,
                                std::size_t new_right)
 {
     const std::size_t b = bucket_index(old_left);
+    Bucket& bucket = table_[b];
 
-    if (b >= table_.size()) {
-        throw std::runtime_error("FM_Wrapper_Cached: bucket index out of range");
+    initialise_bucket(bucket);
+
+    if ((bucket.used + 1) * 10 >= bucket.entries.size() * 7) {
+        rebuild_bucket(bucket);
     }
 
-    table_[b].emplace_back(
-        make_key(old_left, old_right, symbol),
-        Interval{new_left, new_right}
-    );
+    const LookupKey key = make_key(old_left, old_right, symbol);
 
+    const std::size_t mask = bucket.entries.size() - 1;
+    std::size_t pos = key_position(key) & mask;
+
+    while (bucket.entries[pos].used) {
+        if (bucket.entries[pos].key == key) {
+            bucket.entries[pos].interval = Interval{new_left, new_right};
+            return;
+        }
+
+        pos = (pos + 1) & mask;
+    }
+
+    bucket.entries[pos].used = true;
+    bucket.entries[pos].key = key;
+    bucket.entries[pos].interval = Interval{new_left, new_right};
+
+    ++bucket.used;
     ++entries_;
 }
 
@@ -217,8 +287,8 @@ FM_Cache_Info FM_Wrapper_Cached::cache_info() const
     std::size_t max_bucket_entries = 0;
 
     for (std::size_t i = 0; i < table_.size(); ++i) {
-        if (table_[i].size() > max_bucket_entries) {
-            max_bucket_entries = table_[i].size();
+        if (table_[i].used > max_bucket_entries) {
+            max_bucket_entries = table_[i].used;
             max_bucket_index = i;
         }
     }

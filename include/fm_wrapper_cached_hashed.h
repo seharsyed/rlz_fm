@@ -5,7 +5,6 @@
 
 #include <cstddef>
 #include <tuple>
-#include <utility>
 #include <vector>
 
 struct FM_Cache_Info
@@ -70,8 +69,18 @@ private:
         std::size_t new_right = 0;
     };
 
-    using Entry = std::pair<LookupKey, Interval>;
-    using Bucket = std::vector<Entry>;
+    struct Entry
+    {
+        bool used = false;
+        LookupKey key;
+        Interval interval;
+    };
+
+    struct Bucket
+    {
+        std::vector<Entry> entries;
+        std::size_t used = 0;
+    };
 
     std::size_t fm_size_ = 0;
     std::size_t bucket_divisor_ = 128;
@@ -92,6 +101,12 @@ private:
     LookupKey make_key(std::size_t old_left,
                        std::size_t old_right,
                        unsigned char symbol) const;
+
+    static std::size_t key_position(const LookupKey& key);
+
+    static void initialise_bucket(Bucket& bucket);
+
+    static void rebuild_bucket(Bucket& bucket);
 
     bool lookup(std::size_t old_left,
                 std::size_t old_right,

@@ -13,6 +13,7 @@ struct RLZListConfig
     std::string csv_file;
     std::string mode = "baseline";
     std::size_t bucket_divisor = 32;
+    std::size_t min_cache_width = 1;
     std::size_t max_len = 0;
 };
 
@@ -30,6 +31,9 @@ struct RLZListResult
     std::size_t cache_entries = 0;
     std::size_t bucket_size = 0;
     std::size_t bucket_count = 0;
+    std::size_t min_cache_width = 0;
+    std::size_t max_bucket_index = 0;
+    std::size_t max_bucket_entries = 0;
 };
 
 std::vector<std::string> read_rlz_input_list(const std::string& input_list_file);
