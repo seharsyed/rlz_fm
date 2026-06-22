@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <filesystem> // Note that this requires at least gcc 9
 #include <limits>
+#include "rlz_list_runner.h"
+
 
 template <typename int_t>
 void run_bit_decompression(const std::string& ref_file, const std::string& parse_file)
@@ -82,6 +84,40 @@ void run_char_compression(const std::string& ref_file, const std::string& seq_fi
     spdlog::info("Compression ratio [((ref + parse)/(ref + seq)) * 100]: {:.3}%", comp_ratio);
 }
 
+
+template <typename int_t>
+void run_char_list_compression(const std::string& ref_file,
+                               const std::string& input_list_file,
+                               const std::string& mode,
+                               std::size_t bucket_divisor,
+                               const std::string& csv_file,
+                               std::size_t max_len)
+{
+    RLZListConfig config;
+    config.reference_file = ref_file;
+    config.input_list_file = input_list_file;
+    config.mode = mode;
+    config.bucket_divisor = bucket_divisor;
+    config.csv_file = csv_file;
+    config.max_len = max_len;
+
+    std::vector<RLZListResult> results = run_rlz_list<int_t>(config);
+
+    std::size_t total_factors = 0;
+    double total_time = 0.0;
+
+    for (const RLZListResult& row : results) {
+        total_factors += row.factor_count;
+        total_time += row.time_sec;
+    }
+
+    spdlog::info("List compression finished");
+    spdlog::info("Files processed: {}", results.size());
+    spdlog::info("Total factors: {}", total_factors);
+    spdlog::info("Total parse time: {:.6f} seconds", total_time);
+    spdlog::info("CSV written to: {}", csv_file);
+}
+
 int main(int argc, char **argv) 
 {
     CLI::App app("rlz - An implementation of RLZ that compresses a sequence file using a reference file.\n\nImplemented by Rahul Varki");
@@ -97,11 +133,34 @@ int main(int argc, char **argv)
     size_t max_len = 0; // 0 means not set
     bool rlz_repair = false;
     std::string version = "Version: 1.1.0";
+
+    std::string input_list_file;
+    std::string mode = "baseline";
+    std::string csv_file;
+    std::size_t bucket_divisor = 32;
     
     // Compress Subcommand
     auto* compress_cmd = app.add_subcommand("compress", "Compress a sequence file using RLZ");
     compress_cmd->add_option("-r,--ref", ref_file, "Reference file")->required();
-    compress_cmd->add_option("-s,--seq", seq_file, "Sequence file to compress")->required();
+    //compress_cmd->add_option("-s,--seq", seq_file, "Sequence file to compress")->required();
+    
+    compress_cmd->add_option("-s,--seq", seq_file, "Sequence file to compress");
+
+    compress_cmd->add_option("--input-list", input_list_file,
+                         "Text file containing input filenames, one per line");
+
+    compress_cmd->add_option("--mode", mode,
+                         "Experiment mode: baseline or cached")
+    ->check(CLI::IsMember({"baseline", "cached"}))
+    ->default_val("baseline");
+
+    compress_cmd->add_option("--bucket-divisor", bucket_divisor,
+                         "Bucket divisor for cached FM-index mode")
+    ->default_val(32);
+
+    compress_cmd->add_option("--csv", csv_file,
+                         "CSV output file for --input-list experiment mode");
+    
     compress_cmd->add_option("-t,--threads", threads, "Number of threads to use")->default_val(1);
     compress_cmd->add_option("-l, --len", max_len, "Maximum length a match can span")->check(CLI::Range(static_cast<size_t>(1), std::numeric_limits<size_t>::max()));
     compress_cmd->add_flag("--bit", bit, "Experimental: Set if ref lacks unique sequence chars");
@@ -142,6 +201,64 @@ int main(int argc, char **argv)
     
     if (compress_cmd->parsed())
     {
+
+     if (!input_list_file.empty())
+{
+    if (bit) {
+        spdlog::error("--input-list currently supports character mode only. Do not use --bit.");
+        return 1;
+    }
+
+    if (csv_file.empty()) {
+        if (mode == "baseline") {
+            csv_file = "baseline_once.csv";
+        } else {
+            csv_file = "cached_bucket_" + std::to_string(bucket_divisor) + ".csv";
+        }
+    }
+
+    spdlog::info("Input-list experiment mode enabled");
+    spdlog::info("Reference file: {}", ref_file);
+    spdlog::info("Input list: {}", input_list_file);
+    spdlog::info("Mode: {}", mode);
+    spdlog::info("CSV: {}", csv_file);
+
+    std::uintmax_t ref_size = std::filesystem::file_size(ref_file);
+
+    if (rlz_repair) {
+        if (ref_size < std::numeric_limits<int>::max()) {
+            run_char_list_compression<int>(
+                ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+        } else {
+            spdlog::error("Reference too large for int entries.");
+            return 1;
+        }
+        return 0;
+    }
+
+    if (ref_size <= UINT8_MAX) {
+        run_char_list_compression<std::uint8_t>(
+            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+    } else if (ref_size <= UINT16_MAX) {
+        run_char_list_compression<std::uint16_t>(
+            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+    } else if (ref_size <= UINT32_MAX) {
+        run_char_list_compression<std::uint32_t>(
+            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+    } else {
+        run_char_list_compression<std::uint64_t>(
+            ref_file, input_list_file, mode, bucket_divisor, csv_file, max_len);
+    }
+
+    return 0;
+}
+
+if (seq_file.empty())
+{
+    spdlog::error("Provide either -s/--seq or --input-list for compression.");
+    return 1;
+}   
+
         // Encode with "bit" level compression
         if (bit)
         {
