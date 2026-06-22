@@ -20,6 +20,7 @@ class FM_Wrapper_Cached
 {
 public:
     FM_Wrapper_Cached();
+
     FM_Wrapper_Cached(std::size_t fm_size,
                       std::size_t bucket_divisor,
                       std::size_t min_cache_width = 1);
@@ -38,64 +39,82 @@ public:
                                        std::size_t location);
 
     void clear_cache();
+
     FM_Cache_Info cache_info() const;
 
     std::size_t bucket_size() const;
     std::size_t bucket_count() const;
 
 private:
-    struct CacheKey
+    struct LookupKey
     {
         std::size_t left_remainder = 0;
         std::size_t old_right = 0;
         unsigned char symbol = 0;
+
+        bool operator==(const LookupKey& other) const noexcept
+        {
+            return left_remainder == other.left_remainder &&
+                   old_right == other.old_right &&
+                   symbol == other.symbol;
+        }
     };
 
-    struct CacheValue
+    struct Interval
     {
         std::size_t new_left = 0;
         std::size_t new_right = 0;
     };
 
-    struct Slot
+    struct Entry
     {
         bool used = false;
-        CacheKey key;
-        CacheValue value;
+        LookupKey key;
+        Interval interval;
     };
 
     struct Bucket
     {
-        std::vector<Slot> table;
+        std::vector<Entry> entries;
         std::size_t used = 0;
     };
 
     std::size_t fm_size_ = 0;
     std::size_t bucket_divisor_ = 128;
-    std::size_t bucket_size_ = 0;
     std::size_t min_cache_width_ = 1;
+
+    std::vector<Bucket> table_;
 
     std::size_t hits_ = 0;
     std::size_t misses_ = 0;
     std::size_t entries_ = 0;
 
-    std::vector<Bucket> buckets_;
+    void rebuild_table();
 
     void ensure_configured(std::size_t fm_size);
+
     std::size_t bucket_index(std::size_t old_left) const;
 
-    static bool keys_equal(const CacheKey& a, const CacheKey& b);
-    static std::size_t hash_key(const CacheKey& key);
-    static void init_bucket(Bucket& bucket);
-    static void grow_bucket(Bucket& bucket);
+    LookupKey make_key(std::size_t old_left,
+                       std::size_t old_right,
+                       unsigned char symbol) const;
 
-    bool find_in_bucket(const Bucket& bucket,
-                        const CacheKey& key,
-                        CacheValue& value) const;
+    static std::size_t key_position(const LookupKey& key);
 
-    void insert_in_bucket(Bucket& bucket,
-                          const CacheKey& key,
-                          const CacheValue& value);
+    static void initialise_bucket(Bucket& bucket);
+
+    static void rebuild_bucket(Bucket& bucket);
+
+    bool lookup(std::size_t old_left,
+                std::size_t old_right,
+                unsigned char symbol,
+                Interval& cached_interval);
+
+    void insert(std::size_t old_left,
+                std::size_t old_right,
+                unsigned char symbol,
+                std::size_t new_left,
+                std::size_t new_right);
 
     static void check_character_exists(const std::vector<std::size_t>& occs,
                                        unsigned char symbol);

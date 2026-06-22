@@ -27,22 +27,22 @@ void FM_Wrapper_Cached::configure(std::size_t fm_size,
 
     fm_size_ = fm_size;
     bucket_divisor_ = bucket_divisor;
-
-    // IMPORTANT
-    // bucket_divisor means bucket size, not number of buckets.
-    bucket_size_ = bucket_divisor_;
-
-    // Width gate:
-    // width <= 1 means singleton interval. 
     min_cache_width_ = min_cache_width;
 
-    // Keep +1 slack bucket
-    std::size_t count = (fm_size_ / bucket_size_) + 1;
-    buckets_.assign(count, Bucket{});
+    rebuild_table();
 
     hits_ = 0;
     misses_ = 0;
     entries_ = 0;
+}
+
+void FM_Wrapper_Cached::rebuild_table()
+{
+    const std::size_t buckets =
+        (fm_size_ / bucket_divisor_) + 1;
+
+    table_.clear();
+    table_.resize(buckets);
 }
 
 void FM_Wrapper_Cached::ensure_configured(std::size_t fm_size)
@@ -60,17 +60,18 @@ void FM_Wrapper_Cached::ensure_configured(std::size_t fm_size)
 
 std::size_t FM_Wrapper_Cached::bucket_index(std::size_t old_left) const
 {
-    return old_left / bucket_size_;
+    return old_left / bucket_divisor_;
 }
 
-bool FM_Wrapper_Cached::keys_equal(const CacheKey& a, const CacheKey& b)
+FM_Wrapper_Cached::LookupKey FM_Wrapper_Cached::make_key(
+    std::size_t old_left,
+    std::size_t old_right,
+    unsigned char symbol) const
 {
-    return a.left_remainder == b.left_remainder &&
-           a.old_right == b.old_right &&
-           a.symbol == b.symbol;
+    return LookupKey{old_left % bucket_divisor_, old_right, symbol};
 }
 
-std::size_t FM_Wrapper_Cached::hash_key(const CacheKey& key)
+std::size_t FM_Wrapper_Cached::key_position(const LookupKey& key)
 {
     std::size_t h = key.left_remainder;
 
@@ -81,88 +82,104 @@ std::size_t FM_Wrapper_Cached::hash_key(const CacheKey& key)
     return h;
 }
 
-void FM_Wrapper_Cached::init_bucket(Bucket& bucket)
+void FM_Wrapper_Cached::initialise_bucket(Bucket& bucket)
 {
-    if (bucket.table.empty()) {
-        bucket.table.resize(8);
+    if (bucket.entries.empty()) {
+        bucket.entries.resize(8);
         bucket.used = 0;
     }
 }
 
-void FM_Wrapper_Cached::grow_bucket(Bucket& bucket)
+void FM_Wrapper_Cached::rebuild_bucket(Bucket& bucket)
 {
-    std::vector<Slot> old_table;
-    old_table.swap(bucket.table);
+    std::vector<Entry> old_entries;
+    old_entries.swap(bucket.entries);
 
-    bucket.table.clear();
-    bucket.table.resize(old_table.empty() ? 8 : old_table.size() * 2);
+    bucket.entries.clear();
+    bucket.entries.resize(old_entries.empty() ? 8 : old_entries.size() * 2);
     bucket.used = 0;
 
-    for (const Slot& slot : old_table) {
-        if (!slot.used) {
+    for (const Entry& entry : old_entries) {
+        if (!entry.used) {
             continue;
         }
 
-        std::size_t mask = bucket.table.size() - 1;
-        std::size_t pos = hash_key(slot.key) & mask;
+        const std::size_t mask = bucket.entries.size() - 1;
+        std::size_t pos = key_position(entry.key) & mask;
 
-        while (bucket.table[pos].used) {
+        while (bucket.entries[pos].used) {
             pos = (pos + 1) & mask;
         }
 
-        bucket.table[pos] = slot;
+        bucket.entries[pos] = entry;
         ++bucket.used;
     }
 }
 
-bool FM_Wrapper_Cached::find_in_bucket(const Bucket& bucket,
-                                       const CacheKey& key,
-                                       CacheValue& value) const
+bool FM_Wrapper_Cached::lookup(std::size_t old_left,
+                               std::size_t old_right,
+                               unsigned char symbol,
+                               Interval& cached_interval)
 {
-    if (bucket.table.empty()) {
+    const std::size_t b = bucket_index(old_left);
+    Bucket& bucket = table_[b];
+
+    if (bucket.entries.empty()) {
+        ++misses_;
         return false;
     }
 
-    std::size_t mask = bucket.table.size() - 1;
-    std::size_t pos = hash_key(key) & mask;
+    const LookupKey key = make_key(old_left, old_right, symbol);
 
-    while (bucket.table[pos].used) {
-        if (keys_equal(bucket.table[pos].key, key)) {
-            value = bucket.table[pos].value;
+    const std::size_t mask = bucket.entries.size() - 1;
+    std::size_t pos = key_position(key) & mask;
+
+    while (bucket.entries[pos].used) {
+        if (bucket.entries[pos].key == key) {
+            cached_interval = bucket.entries[pos].interval;
+            ++hits_;
             return true;
         }
 
         pos = (pos + 1) & mask;
     }
 
+    ++misses_;
     return false;
 }
 
-void FM_Wrapper_Cached::insert_in_bucket(Bucket& bucket,
-                                         const CacheKey& key,
-                                         const CacheValue& value)
+void FM_Wrapper_Cached::insert(std::size_t old_left,
+                               std::size_t old_right,
+                               unsigned char symbol,
+                               std::size_t new_left,
+                               std::size_t new_right)
 {
-    init_bucket(bucket);
+    const std::size_t b = bucket_index(old_left);
+    Bucket& bucket = table_[b];
 
-    if ((bucket.used + 1) * 10 >= bucket.table.size() * 7) {
-        grow_bucket(bucket);
+    initialise_bucket(bucket);
+
+    if ((bucket.used + 1) * 10 >= bucket.entries.size() * 7) {
+        rebuild_bucket(bucket);
     }
 
-    std::size_t mask = bucket.table.size() - 1;
-    std::size_t pos = hash_key(key) & mask;
+    const LookupKey key = make_key(old_left, old_right, symbol);
 
-    while (bucket.table[pos].used) {
-        if (keys_equal(bucket.table[pos].key, key)) {
-            bucket.table[pos].value = value;
+    const std::size_t mask = bucket.entries.size() - 1;
+    std::size_t pos = key_position(key) & mask;
+
+    while (bucket.entries[pos].used) {
+        if (bucket.entries[pos].key == key) {
+            bucket.entries[pos].interval = Interval{new_left, new_right};
             return;
         }
 
         pos = (pos + 1) & mask;
     }
 
-    bucket.table[pos].used = true;
-    bucket.table[pos].key = key;
-    bucket.table[pos].value = value;
+    bucket.entries[pos].used = true;
+    bucket.entries[pos].key = key;
+    bucket.entries[pos].interval = Interval{new_left, new_right};
 
     ++bucket.used;
     ++entries_;
@@ -217,38 +234,33 @@ std::tuple<std::size_t, std::size_t> FM_Wrapper_Cached::backward_match(
 
     const std::size_t width = old_right - old_left;
 
-    
-    // For FM, singleton/narrow intervals are computed directly.
     if (width <= min_cache_width_) {
         return compute_fm_transition(
-            fm_index, occs, old_left, old_right, next_char);
+            fm_index, occs, old_left, old_right, next_char
+        );
     }
 
-    const std::size_t b = bucket_index(old_left);
-    const std::size_t left_remainder = old_left % bucket_size_;
+    Interval cached_interval{};
 
-    CacheKey key{left_remainder, old_right, symbol};
-
-    CacheValue cached_value;
-    if (find_in_bucket(buckets_[b], key, cached_value)) {
-        ++hits_;
-        return std::make_tuple(cached_value.new_left, cached_value.new_right);
+    if (lookup(old_left, old_right, symbol, cached_interval)) {
+        return std::make_tuple(
+            cached_interval.new_left,
+            cached_interval.new_right
+        );
     }
-
-    ++misses_;
 
     auto result = compute_fm_transition(
-        fm_index, occs, old_left, old_right, next_char);
+        fm_index, occs, old_left, old_right, next_char
+    );
 
     const std::size_t new_left = std::get<0>(result);
     const std::size_t new_right = std::get<1>(result);
 
-    // Skip cache failed/empty refinements.
     if (new_left == new_right) {
         return result;
     }
 
-    insert_in_bucket(buckets_[b], key, CacheValue{new_left, new_right});
+    insert(old_left, old_right, symbol, new_left, new_right);
 
     return result;
 }
@@ -262,10 +274,7 @@ std::size_t FM_Wrapper_Cached::get_suffix_array_value(
 
 void FM_Wrapper_Cached::clear_cache()
 {
-    for (Bucket& bucket : buckets_) {
-        bucket.table.clear();
-        bucket.used = 0;
-    }
+    rebuild_table();
 
     hits_ = 0;
     misses_ = 0;
@@ -278,17 +287,17 @@ FM_Cache_Info FM_Wrapper_Cached::cache_info() const
         hits_,
         misses_,
         entries_,
-        bucket_size_,
-        buckets_.size()
+        bucket_divisor_,
+        table_.size()
     };
 }
 
 std::size_t FM_Wrapper_Cached::bucket_size() const
 {
-    return bucket_size_;
+    return bucket_divisor_;
 }
 
 std::size_t FM_Wrapper_Cached::bucket_count() const
 {
-    return buckets_.size();
+    return table_.size();
 }
