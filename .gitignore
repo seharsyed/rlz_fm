@@ -40,3 +40,19 @@ build/
 *.sa
 *.csv
 *.jsonl
+# experiment outputs
+*.csv
+*.zip
+*.xlsx
+
+# build artefacts
+*.o
+*.out
+*.a
+*.so
+*.dylib
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile

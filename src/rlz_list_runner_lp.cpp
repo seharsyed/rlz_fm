@@ -84,7 +84,7 @@ void write_csv_header(std::ofstream& csv)
 {
     csv << "filename,input_size,parse_size,factor_count,time_sec,mode,"
         << "div_p,min_cache_width,cache_hits,cache_misses,cache_entries,"
-        << "table_slots,max_probe_cluster,hit_rate,load_factor,approx_cache_MB\n";
+        << "table_slots,hit_rate,load_factor,approx_cache_MB\n";
 }
 
 void write_csv_row(std::ofstream& csv, const RLZListResult& r)
@@ -106,7 +106,6 @@ void write_csv_row(std::ofstream& csv, const RLZListResult& r)
         << r.cache_misses << ','
         << r.cache_entries << ','
         << r.bucket_count << ','
-        << r.max_bucket_entries << ','
         << hit_rate << ','
         << (r.bucket_count == 0
                 ? 0.0
@@ -425,7 +424,6 @@ std::vector<RLZListResult> run_rlz_list(const RLZListConfig& config)
             row.bucket_size = after.approx_bytes;
             row.bucket_count = after.table_slots;
             row.max_bucket_index = 0;
-            row.max_bucket_entries = after.max_probe_cluster;
         }
 
         if (csv) {

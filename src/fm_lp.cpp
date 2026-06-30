@@ -55,21 +55,11 @@ void FM_LP::ensure_configured(std::size_t fm_size)
     }
 }
 
-std::size_t FM_LP::mix_hash(std::size_t x) noexcept
-{
-    x += static_cast<std::size_t>(0x9e3779b97f4a7c15ull);
-    x = (x ^ (x >> 30)) * static_cast<std::size_t>(0xbf58476d1ce4e5b9ull);
-    x = (x ^ (x >> 27)) * static_cast<std::size_t>(0x94d049bb133111ebull);
-    return x ^ (x >> 31);
-}
-
 std::size_t FM_LP::key_hash(const LookupKey& key) const noexcept
 {
-    std::size_t h = mix_hash(key.old_left / div_p_);
-    h ^= mix_hash(key.old_left + static_cast<std::size_t>(0x9e3779b97f4a7c15ull) + (h << 6) + (h >> 2));
-    h ^= mix_hash(key.old_right + static_cast<std::size_t>(0x9e3779b97f4a7c15ull) + (h << 6) + (h >> 2));
-    h ^= mix_hash(static_cast<std::size_t>(key.symbol) + static_cast<std::size_t>(0x9e3779b97f4a7c15ull) + (h << 6) + (h >> 2));
-    return h;
+    return key.old_left ^
+           (key.old_right << 1) ^
+           (static_cast<std::size_t>(key.symbol) << 2);
 }
 
 std::size_t FM_LP::start_slot(const LookupKey& key) const
@@ -192,23 +182,6 @@ void FM_LP::reinsert(const LookupKey& key, const Interval& interval)
     throw std::runtime_error("FM_LP: reinsert failed during resize");
 }
 
-std::size_t FM_LP::max_probe_cluster() const
-{
-    std::size_t best = 0;
-    std::size_t run = 0;
-
-    for (const Slot& slot : table_) {
-        if (slot.occupied) {
-            ++run;
-            best = std::max(best, run);
-        } else {
-            run = 0;
-        }
-    }
-
-    return best;
-}
-
 void FM_LP::check_character_exists(const std::vector<std::size_t>& occs,
                                    unsigned char symbol)
 {
@@ -313,7 +286,6 @@ FM_LP_Info FM_LP::cache_info() const
     info.div_p = div_p_;
     info.table_slots = table_.size();
     info.min_cache_width = min_cache_width_;
-    info.max_probe_cluster = max_probe_cluster();
 
     const std::size_t total = hits_ + misses_;
     info.hit_rate = total == 0

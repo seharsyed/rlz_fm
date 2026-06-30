@@ -15,7 +15,6 @@ struct FM_LP_Info
     std::size_t div_p = 0;
     std::size_t table_slots = 0;
     std::size_t min_cache_width = 0;
-    std::size_t max_probe_cluster = 0;
     double hit_rate = 0.0;
     double load_factor = 0.0;
     std::size_t approx_bytes = 0;
@@ -94,8 +93,6 @@ private:
 
     void ensure_configured(std::size_t fm_size);
 
-    static std::size_t mix_hash(std::size_t x) noexcept;
-
     std::size_t key_hash(const LookupKey& key) const noexcept;
 
     std::size_t start_slot(const LookupKey& key) const;
@@ -118,8 +115,6 @@ private:
     void maybe_resize();
 
     void reinsert(const LookupKey& key, const Interval& interval);
-
-    std::size_t max_probe_cluster() const;
 
     static std::tuple<std::size_t, std::size_t> compute_fm_transition(
         const rlz_fm_index_t& fm_index,
