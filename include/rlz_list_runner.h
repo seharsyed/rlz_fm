@@ -11,6 +11,7 @@ struct RLZListConfig
     std::string reference_file;
     std::string input_list_file;
     std::string csv_file;
+    std::string bucket_trace_file;
     std::string mode = "baseline";
     std::size_t bucket_divisor = 32;
     std::size_t min_cache_width = 1;

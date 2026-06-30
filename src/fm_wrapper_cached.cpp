@@ -34,6 +34,7 @@ void FM_Wrapper_Cached::configure(std::size_t fm_size,
     hits_ = 0;
     misses_ = 0;
     entries_ = 0;
+    bucket_hit_sequence_.clear();
 }
 
 void FM_Wrapper_Cached::rebuild_table()
@@ -87,6 +88,7 @@ bool FM_Wrapper_Cached::lookup(std::size_t old_left,
         if (entry.first == key) {
             cached_interval = entry.second;
             ++hits_;
+            bucket_hit_sequence_.push_back(b);
             return true;
         }
     }
@@ -209,6 +211,7 @@ void FM_Wrapper_Cached::clear_cache()
     hits_ = 0;
     misses_ = 0;
     entries_ = 0;
+    bucket_hit_sequence_.clear();
 }
 
 FM_Cache_Info FM_Wrapper_Cached::cache_info() const
@@ -243,4 +246,14 @@ std::size_t FM_Wrapper_Cached::bucket_size() const
 std::size_t FM_Wrapper_Cached::bucket_count() const
 {
     return table_.size();
+}
+
+void FM_Wrapper_Cached::clear_bucket_hit_sequence()
+{
+    bucket_hit_sequence_.clear();
+}
+
+const std::vector<std::size_t>& FM_Wrapper_Cached::bucket_hit_sequence() const
+{
+    return bucket_hit_sequence_;
 }

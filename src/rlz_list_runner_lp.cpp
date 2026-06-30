@@ -1,7 +1,7 @@
 #include "rlz_list_runner.h"
 
 #include "fm_wrapper.h"
-#include "fm_wrapper_cached.h"
+#include "fm_lp.h"
 #include "utility.h"
 
 #include <sdsl/construct.hpp>
@@ -83,12 +83,17 @@ std::string csv_escape(const std::string& value)
 void write_csv_header(std::ofstream& csv)
 {
     csv << "filename,input_size,parse_size,factor_count,time_sec,mode,"
-        << "bucket_divisor,min_cache_width,cache_hits,cache_misses,cache_entries,"
-        << "bucket_size,bucket_count,max_bucket_index,max_bucket_entries\n";
+        << "div_p,min_cache_width,cache_hits,cache_misses,cache_entries,"
+        << "table_slots,max_probe_cluster,hit_rate,load_factor,approx_cache_MB\n";
 }
 
 void write_csv_row(std::ofstream& csv, const RLZListResult& r)
 {
+    const double total_queries = static_cast<double>(r.cache_hits + r.cache_misses);
+    const double hit_rate = total_queries == 0.0
+        ? 0.0
+        : static_cast<double>(r.cache_hits) / total_queries;
+
     csv << csv_escape(r.filename) << ','
         << r.input_size << ','
         << r.parse_size << ','
@@ -100,50 +105,14 @@ void write_csv_row(std::ofstream& csv, const RLZListResult& r)
         << r.cache_hits << ','
         << r.cache_misses << ','
         << r.cache_entries << ','
-        << r.bucket_size << ','
         << r.bucket_count << ','
-        << r.max_bucket_index << ','
-        << r.max_bucket_entries << '\n';
-}
-
-void write_bucket_trace_header(std::ofstream& out)
-{
-    out << "filename,bucket_hit_sequence,total_hits,unique_buckets,min_bucket,max_bucket\n";
-}
-
-void write_bucket_trace_row(std::ofstream& out,
-                            const std::string& filename,
-                            const std::vector<std::size_t>& seq)
-{
-    std::vector<std::size_t> sorted = seq;
-    std::sort(sorted.begin(), sorted.end());
-
-    const std::size_t total_hits = seq.size();
-
-    const std::size_t unique_buckets =
-        sorted.empty()
-            ? 0
-            : static_cast<std::size_t>(
-                  std::unique(sorted.begin(), sorted.end()) - sorted.begin()
-              );
-
-    const std::size_t min_bucket = sorted.empty() ? 0 : sorted.front();
-    const std::size_t max_bucket = sorted.empty() ? 0 : sorted.back();
-
-    out << csv_escape(filename) << ",\"";
-
-    for (std::size_t i = 0; i < seq.size(); ++i) {
-        if (i > 0) {
-            out << ' ';
-        }
-        out << seq[i];
-    }
-
-    out << "\","
-        << total_hits << ','
-        << unique_buckets << ','
-        << min_bucket << ','
-        << max_bucket << '\n';
+        << r.max_bucket_entries << ','
+        << hit_rate << ','
+        << (r.bucket_count == 0
+                ? 0.0
+                : static_cast<double>(r.cache_entries) / static_cast<double>(r.bucket_count)) << ','
+        << (static_cast<double>(r.bucket_size) / (1024.0 * 1024.0))
+        << '\n';
 }
 
 void load_reverse_reference(const std::string& ref_file, std::string& ref_content)
@@ -350,6 +319,10 @@ std::vector<RLZListResult> run_rlz_list(const RLZListConfig& config)
         throw std::runtime_error("input_list_file is empty");
     }
 
+    if (!config.bucket_trace_file.empty()) {
+        throw std::runtime_error("fm_lp does not write bucket-hit traces");
+    }
+
     std::vector<std::string> input_files =
         read_rlz_input_list(config.input_list_file);
 
@@ -367,7 +340,7 @@ std::vector<RLZListResult> run_rlz_list(const RLZListConfig& config)
     calculate_occs(reversed_ref, occs);
 
     FM_Wrapper baseline_wrapper;
-    FM_Wrapper_Cached cached_wrapper;
+    FM_LP cached_wrapper;
 
     if (config.mode == "cached") {
         cached_wrapper.configure(
@@ -386,24 +359,7 @@ std::vector<RLZListResult> run_rlz_list(const RLZListConfig& config)
         }
 
         write_csv_header(csv);
-    }
-
-    std::ofstream bucket_trace;
-
-    if (!config.bucket_trace_file.empty()) {
-        if (config.mode != "cached") {
-            throw std::runtime_error(
-                "--bucket-hit-trace can only be used with --mode cached");
-        }
-
-        bucket_trace.open(config.bucket_trace_file);
-
-        if (!bucket_trace) {
-            throw std::runtime_error(
-                "Error opening bucket trace file: " + config.bucket_trace_file);
-        }
-
-        write_bucket_trace_header(bucket_trace);
+        csv.flush();
     }
 
     std::vector<RLZListResult> results;
@@ -428,13 +384,9 @@ std::vector<RLZListResult> run_rlz_list(const RLZListConfig& config)
         std::size_t misses_before = 0;
 
         if (config.mode == "cached") {
-            FM_Cache_Info before = cached_wrapper.cache_info();
+            FM_LP_Info before = cached_wrapper.cache_info();
             hits_before = before.hits;
             misses_before = before.misses;
-
-            // Clear only the per-file trace.
-            // Do not clear the cache: cache must stay warm across all input files.
-            cached_wrapper.clear_bucket_hit_sequence();
         }
 
         auto start = std::chrono::high_resolution_clock::now();
@@ -463,30 +415,22 @@ std::vector<RLZListResult> run_rlz_list(const RLZListConfig& config)
         row.mode = config.mode;
 
         if (config.mode == "cached") {
-            FM_Cache_Info after = cached_wrapper.cache_info();
+            FM_LP_Info after = cached_wrapper.cache_info();
 
             row.bucket_divisor = config.bucket_divisor;
             row.min_cache_width = after.min_cache_width;
             row.cache_hits = after.hits - hits_before;
             row.cache_misses = after.misses - misses_before;
             row.cache_entries = after.entries;
-            row.bucket_size = after.bucket_size;
-            row.bucket_count = after.bucket_count;
-            row.max_bucket_index = after.max_bucket_index;
-            row.max_bucket_entries = after.max_bucket_entries;
+            row.bucket_size = after.approx_bytes;
+            row.bucket_count = after.table_slots;
+            row.max_bucket_index = 0;
+            row.max_bucket_entries = after.max_probe_cluster;
         }
 
         if (csv) {
             write_csv_row(csv, row);
             csv.flush();
-        }
-
-        if (bucket_trace && config.mode == "cached") {
-            write_bucket_trace_row(
-                bucket_trace,
-                file,
-                cached_wrapper.bucket_hit_sequence());
-            bucket_trace.flush();
         }
 
         results.push_back(row);

@@ -1,36 +1,37 @@
-#ifndef FM_WRAPPER_CACHED_H
-#define FM_WRAPPER_CACHED_H
+#ifndef FM_LP_H
+#define FM_LP_H
 
 #include "utility.h"
 
 #include <cstddef>
 #include <tuple>
-#include <utility>
 #include <vector>
 
-struct FM_Cache_Info
+struct FM_LP_Info
 {
     std::size_t hits = 0;
     std::size_t misses = 0;
     std::size_t entries = 0;
-    std::size_t bucket_size = 0;
-    std::size_t bucket_count = 0;
+    std::size_t div_p = 0;
+    std::size_t table_slots = 0;
     std::size_t min_cache_width = 0;
-    std::size_t max_bucket_index = 0;
-    std::size_t max_bucket_entries = 0;
+    std::size_t max_probe_cluster = 0;
+    double hit_rate = 0.0;
+    double load_factor = 0.0;
+    std::size_t approx_bytes = 0;
 };
 
-class FM_Wrapper_Cached
+class FM_LP
 {
 public:
-    FM_Wrapper_Cached();
+    FM_LP();
 
-    FM_Wrapper_Cached(std::size_t fm_size,
-                      std::size_t bucket_divisor,
-                      std::size_t min_cache_width = 1);
+    FM_LP(std::size_t fm_size,
+          std::size_t div_p,
+          std::size_t min_cache_width = 1);
 
     void configure(std::size_t fm_size,
-                   std::size_t bucket_divisor,
+                   std::size_t div_p,
                    std::size_t min_cache_width = 1);
 
     std::tuple<std::size_t, std::size_t> backward_match(
@@ -44,27 +45,21 @@ public:
 
     void clear_cache();
 
-    FM_Cache_Info cache_info() const;
+    FM_LP_Info cache_info() const;
 
-    std::size_t bucket_size() const;
-    std::size_t bucket_count() const;
     static void check_character_exists(const std::vector<std::size_t>& occs,
                                        unsigned char symbol);
-
-                                       void clear_bucket_hit_sequence();
-
-    const std::vector<std::size_t>& bucket_hit_sequence() const;   
 
 private:
     struct LookupKey
     {
-        std::size_t left_remainder = 0;
+        std::size_t old_left = 0;
         std::size_t old_right = 0;
         unsigned char symbol = 0;
 
         bool operator==(const LookupKey& other) const noexcept
         {
-            return left_remainder == other.left_remainder &&
+            return old_left == other.old_left &&
                    old_right == other.old_right &&
                    symbol == other.symbol;
         }
@@ -76,25 +71,34 @@ private:
         std::size_t new_right = 0;
     };
 
-    using Entry = std::pair<LookupKey, Interval>;
-    using Bucket = std::vector<Entry>;
+    struct Slot
+    {
+        bool occupied = false;
+        LookupKey key{};
+        Interval interval{};
+    };
 
     std::size_t fm_size_ = 0;
-    std::size_t bucket_divisor_ = 128;
+    std::size_t div_p_ = 64;
     std::size_t min_cache_width_ = 1;
 
-    std::vector<Bucket> table_;
+    std::vector<Slot> table_;
 
     std::size_t hits_ = 0;
     std::size_t misses_ = 0;
     std::size_t entries_ = 0;
-    std::vector<std::size_t> bucket_hit_sequence_;
+
+    static constexpr double max_load_factor_ = 0.70;
 
     void rebuild_table();
 
     void ensure_configured(std::size_t fm_size);
 
-    std::size_t bucket_index(std::size_t old_left) const;
+    static std::size_t mix_hash(std::size_t x) noexcept;
+
+    std::size_t key_hash(const LookupKey& key) const noexcept;
+
+    std::size_t start_slot(const LookupKey& key) const;
 
     LookupKey make_key(std::size_t old_left,
                        std::size_t old_right,
@@ -111,7 +115,11 @@ private:
                 std::size_t new_left,
                 std::size_t new_right);
 
-    
+    void maybe_resize();
+
+    void reinsert(const LookupKey& key, const Interval& interval);
+
+    std::size_t max_probe_cluster() const;
 
     static std::tuple<std::size_t, std::size_t> compute_fm_transition(
         const rlz_fm_index_t& fm_index,
